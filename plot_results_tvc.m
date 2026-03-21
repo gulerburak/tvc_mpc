@@ -20,15 +20,21 @@ tmax = max(t_mpc(end), t_lqr(end));
 figure('Name','2-D World Trajectories','NumberTitle','off','Color','w');
 hold on; grid on;
 
+% Reconstruct world-frame positions: y_world = e_y (y_nom=0), z_world = e_z + vz_nom*t
+y_mpc = X_mpc(1,:);
+z_mpc = X_mpc(2,:) + vz_nom .* t_mpc;
+y_lqr = X_lqr(1,:);
+z_lqr = X_lqr(2,:) + vz_nom .* t_lqr;
+
 % Reference line
-z_all = [X_mpc(2,:), X_lqr(2,:)];
+z_all = [z_mpc, z_lqr];
 plot([0 0], [min(z_all)-5, max(z_all)+5], '--', ...
      'Color',[0.10 0.72 0.22], 'LineWidth',1.5, 'DisplayName','Reference y=0');
 
-plot(X_mpc(1,:), X_mpc(2,:), '-',  'Color',clr_mpc, 'LineWidth',2.0, 'DisplayName','MPC');
-plot(X_lqr(1,:), X_lqr(2,:), '--', 'Color',clr_lqr, 'LineWidth',2.0, 'DisplayName','LQR');
+plot(y_mpc, z_mpc, '-',  'Color',clr_mpc, 'LineWidth',2.0, 'DisplayName','MPC');
+plot(y_lqr, z_lqr, '--', 'Color',clr_lqr, 'LineWidth',2.0, 'DisplayName','LQR');
 
-scatter(X_mpc(1,1), X_mpc(2,1), 120, 'k', 'filled', 'DisplayName','Start');
+scatter(y_mpc(1), z_mpc(1), 120, 'k', 'filled', 'DisplayName','Start');
 xlabel('y  [m]  (lateral)');
 ylabel('z  [m]  (altitude)');
 title('World-frame 2-D trajectories: MPC vs LQR');

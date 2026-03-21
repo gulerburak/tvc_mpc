@@ -42,7 +42,7 @@ for k = 1:N
         u_lb <= U(:,k) <= u_ub ];
 end
 
-% Optional terminal set (LQR invariant set)
+% Optional terminal set
 if ~isempty(Xf_A)
     constraints = [ constraints, Xf_A * E(:,N+1) <= Xf_b ];
 end
