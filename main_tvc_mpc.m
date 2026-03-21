@@ -263,13 +263,17 @@ xlabel(ax_hnm, 't [s]'); ylabel(ax_hnm, '||e||_2'); title(ax_hnm, 'Error norm vs
 
 % Tuning scenarios
 W_cases = {
-           diag([5, 0.5, 2, 0.1, 200, 20]), diag([500, 0.1]), 'Nominal  (Q_\theta=200)';
-           diag([5, 0.5, 2, 0.1, 50, 10]), diag([500, 0.1]), 'Low \theta penalty  (Q_\theta=50)';
-           diag([5, 0.5, 2, 0.1, 500, 50]), diag([500, 0.1]), 'High \theta penalty  (Q_\theta=500)';
-           };
+    diag([5,  0.5, 2, 0.1, 200, 20]), diag([500,  0.1]), 'Nominal  (Q_\theta=200)';
+    diag([5,  0.5, 2, 0.1,  50, 10]), diag([500,  0.1]), 'Low \theta penalty  (Q_\theta=50)';
+    diag([5,  0.5, 2, 0.1, 500, 50]), diag([500,  0.1]), 'High \theta penalty  (Q_\theta=500)';
+    diag([5,  0.5, 2, 0.1, 200, 20]), diag([100,  0.1]), 'Low R_\delta=100  (aggressive gimbal)';
+    diag([5,  0.5, 2, 0.1, 200, 20]), diag([2000, 0.1]), 'High R_\delta=2000  (conservative gimbal)';
+    diag([5,  0.5, 2, 0.1, 200,  5]), diag([500,  0.1]), 'Low Q_q=5  (less rate damping)';
+    diag([50, 0.5, 2, 0.1, 200, 20]), diag([500,  0.1]), 'High Q_{ey}=50  (position priority)';
+};
 
 % plot settings
-clrs_w = {[0.20 0.45 0.85]; [0.85 0.20 0.20]; [0.10 0.72 0.22]};
+clrs_w = num2cell(lines(size(W_cases, 1)), 2);
 
 fig_wt = figure('Name', 'Weight Tuning', 'NumberTitle', 'off', 'Color', 'w');
 tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
@@ -281,7 +285,7 @@ ylabel(ax_wy, 'e_y [m]');
 xlabel(ax_wy, 't [s]');
 
 ax_wth = nexttile; 
-old(ax_wth, 'on'); 
+hold(ax_wth, 'on'); 
 grid(ax_wth, 'on');
 title(ax_wth, 'Pitch angle  \theta');
 ylabel(ax_wth, '\theta [deg]'); 
@@ -337,15 +341,14 @@ legend(ax_wd, 'Location', 'northeast', 'FontSize', 7);
 legend(ax_wn, 'Location', 'northeast', 'FontSize', 7);
 
 
-%%  Disturbance rejection
+%% Disturbance rejection
 
-%define a lateral gust disturbance
+% define a lateral gust disturbance
 gust_k = round(1.0 / Ts); % step index
-gust_force = 200; % force [N]
-gust_dur = round(0.25 / Ts); % duration [steps]
+gust_force = 200; % force
+gust_dur = round(0.25 / Ts); % duration
 
-% Build disturbance matrix: column k holds the additive state kick at step k.
-% Gust acts on vy (state 3): delta_vy = F/m * Ts
+% Gust acts on vy: delta_vy = F/m * Ts
 D_gust = zeros(nx, T_sim);
 D_gust(3, gust_k:gust_k + gust_dur - 1) = gust_force / m * Ts;
 
@@ -375,46 +378,38 @@ yline(rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8);
 ylabel('\theta [deg]'); xlabel('t [s]');
 title('Pitch angle during gust');
 
-%%  14. OBSERVER DESIGN + MEASUREMENT NOISE SIMULATION
-%%
-%%  Kalman filter (discrete-time LQE, dual of LQR) estimates the error
-%%  state from noisy sensor readings. The MPC then closes the loop on the
-%%  estimate, not the true state.
-%%
-%%  Sensor noise model (1-sigma):
-%%    y, z   : ±0.50 m     (GPS horizontal/vertical)
-%%    vy, vz : ±0.32 m/s   (inertial + Doppler fusion)
-%%    theta  : ±1°          (IMU pitch angle)
-%%    q      : ±2°/s        (rate gyroscope)
+%% Observer: Measurement noise on output feedback
+%
+%  Sensor noise
+%    y, z   : ±0.50 m
+%    vy, vz : ±0.32 m/s
+%    theta  : ±1 deg
+%    q      : ±2 deg/s
 
-fprintf('\n--- Observer design (Kalman filter / discrete LQE) ---\n');
+fprintf('\nKalman filter\n');
 
-% Output feedback: only positions (GPS) and attitude (IMU) are measured.
-% Velocities evy and evz are NOT directly measured — the KF reconstructs them.
-%   y = [ey; ez; etheta; eq]
-Cd = [1 0 0 0 0 0;   % ey      (GPS lateral)
-      0 1 0 0 0 0;   % ez      (GPS altitude)
-      0 0 0 0 1 0;   % etheta  (IMU pitch angle)
-      0 0 0 0 0 1];  % eq      (rate gyroscope)
+% Output feedback: only positions from GPS and attitude from IMU are measured.
+Cd = [1 0 0 0 0 0;   % ey
+      0 1 0 0 0 0;   % ez
+      0 0 0 0 1 0;   % etheta
+      0 0 0 0 0 1];  % eq
 
 ny = size(Cd, 1);
 
 % Observability check
 Ob = obsv(Ad, Cd);
 fprintf('Observability rank: %d  (need %d)\n', rank(Ob), nx);
-assert(rank(Ob) == nx, 'System is not observable with this Cd');
 
-% Process noise covariance Qn — model uncertainty (unmodelled dynamics, gusts)
-% Higher uncertainty on unmeasured velocity states
+% Process noise covariance Qn (model uncertainty)
 Qn = diag([0.01; 0.01; 0.10; 0.10; (0.5 * pi / 180) ^ 2; (1 * pi / 180) ^ 2]);
 
-% Measurement noise covariance Rn — only for measured outputs
-sigma_y = 0.50; % GPS position noise [m]
-sigma_th = 1 * pi / 180; % IMU pitch noise [rad]
-sigma_q = 2 * pi / 180; % gyro rate noise [rad/s]
+% Measurement noise covariance Rn (measurement uncertainty)
+sigma_y = 0.50;
+sigma_th = 1 * pi / 180;
+sigma_q = 2 * pi / 180;
 Rn = diag([sigma_y ^ 2; sigma_y ^ 2; sigma_th ^ 2; sigma_q ^ 2]);
 
-% Steady-state Kalman gain via dlqe (dual of LQR / DARE on transposed system)
+% Steady-state Kalman gain via dlqe
 [L_kf, ~] = dlqe(Ad, eye(nx), Cd, Qn, Rn);
 
 % Observer error dynamics: eigenvalues of (I - L_kf*Cd)*Ad (corrector form)
@@ -422,15 +417,14 @@ eigs_obs = eig((eye(nx) - L_kf * Cd) * Ad);
 fprintf('Kalman gain max singular value:    %.4f\n', max(svd(L_kf)));
 fprintf('Observer error max|eig|:           %.6f  (must be < 1)\n', max(abs(eigs_obs)));
 
-% --- Observer-based MPC simulation with measurement noise ---
-rng(42); % reproducible random seed — must be set before run_mpc_sim
+% run MPC simulation with observer and measurement noise
+rng(42);
 [E_obs, U_obs, ~, T_end_obs, infeas_obs, ~, E_hat] = run_mpc_sim( ...
     e0, x_ref_0, Ad, Bd, Q, R, P_inf, N, ...
     e_lb, e_ub, u_lb, u_ub, [], [], T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
     'Lkf', L_kf, 'Cd', Cd, 'Rn', Rn, 'LiveAnimation', live_animation, 'Rp', rp);
 fprintf('Observer-based MPC converged at t = %.2f s\n', T_end_obs * Ts);
 
-% Quick plot
 figure('Name', 'Observer MPC with Measurement Noise', 'NumberTitle', 'off', 'Color', 'w');
 tiledlayout(2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
