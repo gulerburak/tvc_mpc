@@ -1,5 +1,7 @@
 clear; clc; close all;
-%%  1. Physical Parameters
+live_animation = true; % set to false to skip live animation during simulation
+
+%% Physical Parameters
 m = 50; % rocket mass [kg]
 g = 9.81; % gravitational acceleration    [m/s^2]
 T0 = m * g; % nominal thrust (= weight)     [N]   490.5 N
@@ -15,7 +17,7 @@ rp.W = 0.4; % body width     [m]
 rp.cg_frac = 0.375; % fraction of L below CG  (CG at 1.5 m from base)
 rp.l_tvc = l_tvc;
 
-%%  Linearization
+%% Linearization
 %  Equilibrium:  theta=0, delta=0, vy=0, vz=vz_nom, dT=0
 %  Error state:  e = x - x_ref(t)   where x_ref(t) = [0;vz_nom*t;0;vz_nom;0;0]
 %
@@ -44,7 +46,7 @@ Bc(6, 1) = T0 * l_tvc / J; % eq_dot += (T0*l_tvc/J)*delta
 eigs_c = eig(Ac);
 fprintf('Continuous-time eigenvalues:  %.4f', real(eigs_c)');
 
-%%  3. Discretisation
+%% Discretisation
 sysc = ss(Ac, Bc, eye(nx), zeros(nx, nu));
 sysd = c2d(sysc, Ts, 'zoh');
 Ad = sysd.A;
@@ -54,71 +56,50 @@ eigs_d = abs(eig(Ad));
 fprintf('Discrete-time eigenvalue magnitudes: min=%.6f  max=%.6f\n', ...
     min(eigs_d), max(eigs_d));
 
-%%  4. Controllability check
+%% Controllability check
 Cm = ctrb(Ad, Bd);
 rk = rank(Cm);
 fprintf('Controllability matrix rank: %d  (need %d)', rk, nx);
 
-%%  5. Cost matrices Q and R
+%% Cost matrices Q and R
 %         ey   ez   evy  evz  etheta  eq
 Q = diag([5, 0.5, 2, 0.1, 200, 20]);
 %         delta  dT
 R = diag([500, 0.1]);
 
-%% =========================================================================
-%%  6. TERMINAL INGREDIENTS  (DARE  →  LQR terminal cost + invariant set)
-%% =========================================================================
+%% Terminal ingredients
 [P_inf, ~, Kd] = dare(Ad, Bd, Q, R);
-K_lqr = -Kd; % u = K_lqr * e  (optimal LQR gain, u = -Kd*e)
+K_lqr = -Kd; % sign convention
 
-% Verify LQR closed-loop stability
+% verification of LQR closed-loop stability for terminal set design
 A_cl = Ad + Bd * K_lqr;
 rho_cl = max(abs(eig(A_cl)));
 fprintf('\n--- Terminal ingredients ---\n');
 fprintf('LQR closed-loop spectral radius: %.6f  (must be < 1)\n', rho_cl);
-assert(rho_cl < 1, 'LQR is not stabilising — adjust Q, R.');
+assert(rho_cl < 1, 'LQR is not stabilising');
 
-% Verify P_inf satisfies discrete Lyapunov / DARE condition
-% A_cl'*P*A_cl - P + Q + K_lqr'*R*K_lqr = 0  (DARE residual)
-DARE_residual = norm(A_cl' * P_inf * A_cl - P_inf + Q + K_lqr' * R * K_lqr, 'fro');
-fprintf('DARE residual (Frobenius norm): %.2e  (should be ~0)\n', DARE_residual);
+%% Constraints
+%  State constraints (error coordinates):
+%    |ey| <= 100 m   (lateral position error)
+%    |ez| <= 100 m   (altitude deviation)
+%    |evy| <= 30 m/s  (lateral velocity)
+%    |evz| <= 30 m/s  (vertical velocity deviation)
+%    |theta| <= 15°   (linearisation validity)
+%    |q| <= 20°/s   (pitch rate)
+%
+%  Input constraints (hardware limits):
+%    |delta| <= 5°    (gimbal mechanical limit)
+%    |dT| <= 150 N (thrust deviation limit)
 
-fprintf('\nComputing maximal LQR-invariant terminal set (MPT3) ... ');
-
-%% =========================================================================
-%%  7. CONSTRAINTS  (physical actuator and linearisation-validity limits)
-%%
-%%  State constraints (error coordinates):
-%%    |ey|  <= 100 m   (lateral position error)
-%%    |ez|  <= 100 m   (altitude deviation — decoupled, loose bound)
-%%    |evy| <= 30 m/s  (lateral velocity)
-%%    |evz| <= 30 m/s  (vertical velocity deviation)
-%%    |theta| <= 15°   (linearisation validity; ≈0.262 rad)
-%%    |q|   <= 20°/s   (pitch rate;  ≈0.349 rad/s)
-%%
-%%  Input constraints (hardware limits):
-%%    |delta| <= 5°    (gimbal mechanical travel limit)
-%%    |dT|    <= 150 N (~30% of T0 — fuel-flow range)
-%% =========================================================================
 e_lb = [-100; -100; -30; -30; -15 * pi / 180; -20 * pi / 180];
 e_ub = [100; 100; 30; 30; 15 * pi / 180; 20 * pi / 180];
 
-u_lb = [-5 * pi / 180; -150]; % [delta_min;  dT_min]
-u_ub = [5 * pi / 180; 150]; % [delta_max;  dT_max]
+u_lb = [-5 * pi / 180; -150];
+u_ub = [5 * pi / 180; 150];
 
-% Check K_lqr*e satisfies input constraints for e in the constraint set
-% (needed for terminal set positive invariance)
-u_at_corner = abs(K_lqr * e_ub); % rough check at one constraint-set corner (2x1)
-fprintf('\n--- Constraint summary ---\n');
-fprintf('|theta| <= %.1f deg,  |delta| <= %.1f deg\n', ...
-    rad2deg(e_ub(5)), rad2deg(u_ub(1)));
-fprintf('|K_lqr*e_ub| at corner: delta=%.4f deg  dT=%.1f N\n', ...
-    rad2deg(u_at_corner(1)), u_at_corner(2));
-fprintf('  (terminal set X_f will be smaller than constraint set)\n');
+%% Terminal set with MPT3
 
-%% =========================================================================
-%%  7b. TERMINAL SET via MPT3
-%% =========================================================================
+% define the system in MPT3
 tvc_sys = LTISystem('A', Ad, 'B', Bd, 'Ts', Ts);
 tvc_sys.x.min = e_lb;
 tvc_sys.x.max = e_ub;
@@ -132,71 +113,35 @@ tvc_sys.x.terminalPenalty = QuadFunction(P_inf);
 
 tvc_sys.x.with('terminalSet');
 X_f = tvc_sys.LQRSet;
-X_f
 
-fprintf('done.\n');
-fprintf('Terminal set: Chebyshev radius = %.4f  (in error-state space)\n', ...
-    X_f.chebyCenter.r);
+fprintf('Terminal set: Chebyshev radius (c) = %.4f', X_f.chebyCenter.r);
 
-% Print per-state bounds of the terminal set
-state_names = {'ey [m]', 'ez [m]', 'evy [m/s]', 'evz [m/s]', ...
-                   'theta [deg]', 'q [deg/s]'};
-scale = [1 1 1 1 180 / pi 180 / pi]; % convert angles to degrees for display
-fprintf('\nTerminal set per-state bounds:\n');
-fprintf('  %-14s  %8s  %8s\n', 'State', 'Min', 'Max');
-fprintf('  %s\n', repmat('-', 1, 34));
-
-for i = 1:6
-    ei = zeros(6, 1);
-    ei(i) = 1;
-    x_max = X_f.support(ei) * scale(i);
-    x_min = -X_f.support(-ei) * scale(i);
-    fprintf('  %-14s  %8.4f  %8.4f\n', state_names{i}, x_min, x_max);
-end
-
-% Extract H-rep for YALMIP constraints
+% Convert terminal set from MPT3 format to H-representation
 Xf_A = X_f.A;
 Xf_b = X_f.b;
 
-%% =========================================================================
-%%  8. INITIAL CONDITION
-%%
-%%  The rocket starts with:
-%%    y  = 3 m lateral offset  (e.g. wind during ignition / pad misalignment)
-%%    theta = 5°  (≈0.087 rad) initial tilt
-%%    All velocities at nominal  →  vy=0, vz=vz_nom
-%%
-%%  In error coordinates (reference x_ref(0) = [0;0;0;vz_nom;0;0]):
-%%    e0 = [3; 0; 0; 0; 0.087; 0]
-%% =========================================================================
+% Initial state w.r.t reference
 e0 = [3; 0; 0; 0; 5 * pi / 180; 0];
 
-in_Xf = all(Xf_A * e0 <= Xf_b);
-fprintf('\nInitial error e0 in X_f: %s  (N=%d should be sufficient)\n', ...
-    mat2str(in_Xf), N);
-assert(all(e0 >= e_lb) && all(e0 <= e_ub), 'e0 violates state constraints');
-
-%% =========================================================================
-%%  9. MPC CLOSED-LOOP SIMULATION  with live animation
-%% =========================================================================
-T_sim = 150; % simulation steps  (7.5 s)
+%% MPC Simulation
+T_sim = 150;
 E_mpc = zeros(nx, T_sim + 1);
 U_mpc = zeros(nu, T_sim);
-X_world = zeros(nx, T_sim + 1); % world-frame states
+X_world = zeros(nx, T_sim + 1);
 
-% Initial world state: x = x_ref(0) + e0
+% error state convention x_world = x_ref(0) + e0
 x_ref_0 = [0; 0; 0; vz_nom; 0; 0];
 X_world(:, 1) = x_ref_0 + e0;
 E_mpc(:, 1) = e0;
 
-fprintf('\n--- MPC closed-loop simulation (N=%d, T_sim=%d) ---\n', N, T_sim);
+fprintf('\n Starting MPC Simulation (N=%d, T_sim=%d) ---\n', N, T_sim);
 
-% Figure layout: wide window
-fig = figure('Color', 'w', 'Position', [40 60 1400 560], ...
-    'Name', 'TVC MPC — Thrust Vector Control Rocket');
-
-ax_rocket = subplot(1, 2, 1);
-ax_states = subplot(1, 2, 2);
+if live_animation
+    fig = figure('Color', 'w', 'Position', [40 60 1400 560], ...
+        'Name', 'TVC MPC');
+    ax_rocket = subplot(1, 2, 1);
+    ax_states = subplot(1, 2, 2);
+end
 
 T_end_mpc = T_sim;
 tic;
@@ -204,12 +149,7 @@ tic;
 for k = 1:T_sim
     ek = E_mpc(:, k);
 
-    % ---- Solve MPC QP ----
-    % Terminal set constraint omitted: nonlinear model-plant mismatch can push
-    % the state outside the linearised feasibility domain; DARE terminal cost
-    % alone provides convergence (Rawlings & Mayne 2017, Remark 2.21).
-    % [u_k, U_seq, ok] = solve_mpc_tvc(ek, Ad, Bd, Q, R, P_inf, N, ...
-    %                                   e_lb, e_ub, u_lb, u_ub, Xf_A, Xf_b);
+    % solve MPC
     [u_k, U_seq, ok] = solve_mpc_tvc(ek, Ad, Bd, Q, R, P_inf, N, ...
         e_lb, e_ub, u_lb, u_ub, Xf_A, Xf_b);
 
@@ -249,13 +189,15 @@ for k = 1:T_sim
     end
 
     % ---- Animation ----
-    clf(fig);
-    ax_rocket = subplot(1, 2, 1);
-    ax_states = subplot(1, 2, 2);
-    draw_tvc_frame(ax_rocket, ax_states, X_world(:, 1:k + 1), U_mpc(:, 1:k), ...
-        pred_world, k * Ts, N, T_sim, Ts, rp);
-    drawnow limitrate;
-    pause(0.01);
+    if live_animation
+        clf(fig);
+        ax_rocket = subplot(1, 2, 1);
+        ax_states = subplot(1, 2, 2);
+        draw_tvc_frame(ax_rocket, ax_states, X_world(:, 1:k + 1), U_mpc(:, 1:k), ...
+            pred_world, k * Ts, N, T_sim, Ts, rp);
+        drawnow limitrate;
+        pause(0.01);
+    end
 
     % ---- Convergence check ----
     if norm(E_mpc(:, k + 1)) < 1e-3
