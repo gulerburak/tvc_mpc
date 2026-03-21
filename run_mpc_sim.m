@@ -108,8 +108,9 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         E(:, k + 1) = x_next - x_ref_kp1;
 
         if use_observer
-            noise = sqrt(diag(opts.Rn)) .* randn(nx, 1);
-            y_meas = E(:, k + 1) + noise;
+            ny = size(opts.Cd, 1);
+            noise = sqrt(diag(opts.Rn)) .* randn(ny, 1);
+            y_meas = opts.Cd * E(:, k + 1) + noise;
             e_hat_pred = Ad * e_hat + Bd * u_k;
             e_hat = e_hat_pred + opts.Lkf * (y_meas - opts.Cd * e_hat_pred);
         else

@@ -44,7 +44,8 @@ Bc(4, 2) = 1 / m; % evz_dot += dT/m
 Bc(6, 1) = T0 * l_tvc / J; % eq_dot += (T0*l_tvc/J)*delta
 
 eigs_c = eig(Ac);
-fprintf('Continuous-time eigenvalues:  %.4f', real(eigs_c)');
+fprintf('Continuous-time eigenvalues:\n');
+disp(real(eigs_c))
 
 %% Discretisation
 sysc = ss(Ac, Bc, eye(nx), zeros(nx, nu));
@@ -175,14 +176,13 @@ N_study = [5, 10, 20, 30];
 conv_times = nan(1, numel(N_study));
 peak_theta = nan(1, numel(N_study));
 solve_t = zeros(1, numel(N_study));
-infeas_step = zeros(1, numel(N_study)); % 0 = no infeasibility
-results_h = cell(numel(N_study), 1); % store E_h per horizon for plotting
+infeas_step = zeros(1, numel(N_study)); % 0 means no infeasibility
+results_h = cell(numel(N_study), 1); % for plotting
 
 for ni = 1:numel(N_study)
     Ni = N_study(ni);
     t0h = tic;
-    % No terminal set constraint — small N may not steer into X_f.
-    % Stops (does not fall back to LQR) if infeasible.
+    
     [E_h, ~, ~, T_end_h, inf_k] = run_mpc_sim(e0, x_ref_0, Ad, Bd, Q, R, P_inf, Ni, ...
         e_lb, e_ub, u_lb, u_ub, [], [], T_sim, vz_nom, m, g, J, l_tvc, T0, Ts);
     solve_t(ni) = toc(t0h);
@@ -239,7 +239,7 @@ for ni = 1:numel(N_study)
     lbl = sprintf('N=%d', N_study(ni));
 
     if infeas_step(ni) > 0
-        lbl = [lbl ' (infeas @' sprintf('%.2fs', infeas_step(ni) * Ts) ')'];
+        lbl = [lbl ' (infeasible @' sprintf('%.2fs', infeas_step(ni) * Ts) ')'];
         ls = '--';
     else
         ls = '-';
@@ -389,17 +389,30 @@ title('Pitch angle during gust');
 
 fprintf('\n--- Observer design (Kalman filter / discrete LQE) ---\n');
 
-Cd = eye(nx); % full-state measurement (all 6 states observed with noise)
+% Output feedback: only positions (GPS) and attitude (IMU) are measured.
+% Velocities evy and evz are NOT directly measured — the KF reconstructs them.
+%   y = [ey; ez; etheta; eq]
+Cd = [1 0 0 0 0 0;   % ey      (GPS lateral)
+      0 1 0 0 0 0;   % ez      (GPS altitude)
+      0 0 0 0 1 0;   % etheta  (IMU pitch angle)
+      0 0 0 0 0 1];  % eq      (rate gyroscope)
+
+ny = size(Cd, 1);
+
+% Observability check
+Ob = obsv(Ad, Cd);
+fprintf('Observability rank: %d  (need %d)\n', rank(Ob), nx);
+assert(rank(Ob) == nx, 'System is not observable with this Cd');
 
 % Process noise covariance Qn — model uncertainty (unmodelled dynamics, gusts)
-Qn = diag([0.01; 0.01; 0.05; 0.05; (0.5 * pi / 180) ^ 2; (1 * pi / 180) ^ 2]);
+% Higher uncertainty on unmeasured velocity states
+Qn = diag([0.01; 0.01; 0.10; 0.10; (0.5 * pi / 180) ^ 2; (1 * pi / 180) ^ 2]);
 
-% Measurement noise covariance Rn — sensor accuracy (1-sigma values above)
+% Measurement noise covariance Rn — only for measured outputs
 sigma_y = 0.50; % GPS position noise [m]
-sigma_v = 0.32; % velocity noise [m/s]
 sigma_th = 1 * pi / 180; % IMU pitch noise [rad]
 sigma_q = 2 * pi / 180; % gyro rate noise [rad/s]
-Rn = diag([sigma_y ^ 2; sigma_y ^ 2; sigma_v ^ 2; sigma_v ^ 2; sigma_th ^ 2; sigma_q ^ 2]);
+Rn = diag([sigma_y ^ 2; sigma_y ^ 2; sigma_th ^ 2; sigma_q ^ 2]);
 
 % Steady-state Kalman gain via dlqe (dual of LQR / DARE on transposed system)
 [L_kf, ~] = dlqe(Ad, eye(nx), Cd, Qn, Rn);
@@ -414,7 +427,7 @@ rng(42); % reproducible random seed — must be set before run_mpc_sim
 [E_obs, U_obs, ~, T_end_obs, infeas_obs, ~, E_hat] = run_mpc_sim( ...
     e0, x_ref_0, Ad, Bd, Q, R, P_inf, N, ...
     e_lb, e_ub, u_lb, u_ub, [], [], T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
-    'Lkf', L_kf, 'Cd', Cd, 'Rn', Rn);
+    'Lkf', L_kf, 'Cd', Cd, 'Rn', Rn, 'LiveAnimation', live_animation, 'Rp', rp);
 fprintf('Observer-based MPC converged at t = %.2f s\n', T_end_obs * Ts);
 
 % Quick plot
