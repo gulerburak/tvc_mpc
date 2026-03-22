@@ -1,15 +1,15 @@
 function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
-        e0, x_ref_0, Ad, Bd, Q, R, P_inf, N, ...
-        e_lb, e_ub, u_lb, u_ub, Xf_A, Xf_b, ...
+        e0, x_ref_0, Ad, Bd, Q, R, P_inf, beta, N, ...
+        e_lb, e_ub, u_lb, u_ub, ...
         T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, opts)
     % This function runs closed-loop MPC simulation.
     % Parameters:
     % e0, x_ref_0        initial error state and world reference state
     % Ad, Bd             discrete TVC model
-    % Q, R, P_inf        stage and terminal cost matrices
+    % Q, R, P_inf        stage and terminal cost matrices (Approach 3)
+    % beta               terminal cost weight (>= 1); replaces terminal set constraint
     % N                  prediction horizon
     % e_lb/ub, u_lb/ub   state and input constraints
-    % Xf_A, Xf_b         terminal set (pass [] to disable)
     % T_sim              simulation steps
     % vz_nom             nominal vz
     % m,g,J,l_tvc,T0,Ts  simulation parameters 
@@ -17,8 +17,11 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
     % Optional parameters:
     % ConvTol        convergence tolerance
     % D              state disturbance
-    % Lkf            Kalman gain
-    % Cd             measurement matrix
+    % Lkf            Kalman gain (nx×ny non-augmented, or (nx+nd)×ny augmented)
+    % Cd             measurement matrix for original state (used for y generation)
+    % Aaug           augmented A matrix [Ad, Bd_dist; 0, I]   (optional)
+    % Baug           augmented B matrix [Bd; 0]               (optional)
+    % Caug           augmented output matrix [Cd, Cd_dist]    (optional)
     % Rn             measurement noise covariance
     % LiveAnimation  show animation during simulation
     % Rp             rocket visual parameters struct
@@ -40,13 +43,12 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         Q
         R
         P_inf
+        beta
         N
         e_lb
         e_ub
         u_lb
         u_ub
-        Xf_A
-        Xf_b
         T_sim
         vz_nom
         m
@@ -55,10 +57,13 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         l_tvc
         T0
         Ts
-        opts.ConvTol (1, 1) double = 1e-3
+        opts.ConvTol (1, 1) double = 0.1
         opts.D = []
         opts.Lkf = []
         opts.Cd = []
+        opts.Aaug = []
+        opts.Baug = []
+        opts.Caug = []
         opts.Rn = []
         opts.LiveAnimation (1, 1) logical = false
         opts.Rp = []
@@ -73,19 +78,24 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
     E_hat = zeros(nx, T_sim + 1); E_hat(:, 1) = e0;
     U = zeros(nu, T_sim);
     X = zeros(nx, T_sim + 1); X(:, 1) = x_ref_0 + e0;
+    z_ref_0 = x_ref_0(2); % base altitude of reference (0 for climb from origin, z_target for hover)
     U_seqs = zeros(nu, N, T_sim);
     T_end = T_sim;
     infeasible_k = 0;
 
     e_hat = e0;
-    
+    use_aug = use_observer && ~isempty(opts.Aaug);
+    if use_aug
+        xi_hat = [e0; zeros(size(opts.Aaug, 1) - nx, 1)];
+    end
+
     if opts.LiveAnimation
         fig = figure('Color', 'w', 'Position', [40 60 1400 560], 'Name', 'TVC MPC');
     end
 
     for k = 1:T_sim
-        [u_k, U_seq, ok] = solve_mpc_tvc(e_hat, Ad, Bd, Q, R, P_inf, N, ...
-            e_lb, e_ub, u_lb, u_ub, Xf_A, Xf_b);
+        [u_k, U_seq, ok] = solve_mpc_tvc(e_hat, Ad, Bd, Q, R, P_inf, beta, N, ...
+            e_lb, e_ub, u_lb, u_ub);
 
         if ~ok
             warning('MPC infeasible at k=%d (t=%.2f s)', k, k * Ts);
@@ -97,6 +107,9 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         U(:, k) = u_k;
         U_seqs(:, :, k) = U_seq;
 
+        % print current U
+        fprintf('k=%3d, t=%5.2f s, u=[%7.2f, %7.2f]\n', k, k * Ts, u_k(1), u_k(2));
+
         x_next = tvc_nonlinear_step(X(:, k), u_k, m, g, J, l_tvc, T0, Ts);
 
         if ~isempty(opts.D)
@@ -104,15 +117,21 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         end
 
         X(:, k + 1) = x_next;
-        x_ref_kp1 = [0; vz_nom * k * Ts; 0; vz_nom; 0; 0];
+        x_ref_kp1 = [0; z_ref_0 + vz_nom * k * Ts; 0; vz_nom; 0; 0];
         E(:, k + 1) = x_next - x_ref_kp1;
 
         if use_observer
-            ny = size(opts.Cd, 1);
-            noise = sqrt(diag(opts.Rn)) .* randn(ny, 1);
+            ny_obs = size(opts.Cd, 1);
+            noise = sqrt(diag(opts.Rn)) .* randn(ny_obs, 1);
             y_meas = opts.Cd * E(:, k + 1) + noise;
-            e_hat_pred = Ad * e_hat + Bd * u_k;
-            e_hat = e_hat_pred + opts.Lkf * (y_meas - opts.Cd * e_hat_pred);
+            if use_aug
+                xi_hat_pred = opts.Aaug * xi_hat + opts.Baug * u_k;
+                xi_hat = xi_hat_pred + opts.Lkf * (y_meas - opts.Caug * xi_hat_pred);
+                e_hat = xi_hat(1:nx);
+            else
+                e_hat_pred = Ad * e_hat + Bd * u_k;
+                e_hat = e_hat_pred + opts.Lkf * (y_meas - opts.Cd * e_hat_pred);
+            end
         else
             e_hat = E(:, k + 1);
         end
@@ -127,7 +146,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
             for j = 1:N
                 e_tmp = Ad * e_tmp + Bd * U_seq(:, j);
                 pred_world(1, j + 1) = e_tmp(1);
-                pred_world(2, j + 1) = e_tmp(2) + vz_nom * (k - 1 + j) * Ts;
+                pred_world(2, j + 1) = z_ref_0 + vz_nom * (k - 1 + j) * Ts + e_tmp(2);
             end
 
             clf(fig);

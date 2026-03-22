@@ -7,9 +7,9 @@ g = 9.81; % gravitational acceleration    [m/s^2]
 T0 = m * g; % nominal thrust (= weight)     [N]   490.5 N
 J = 80; % moment of inertia about CG    [kg.m^2]
 l_tvc = 1.3; % CG to nozzle gimbal distance  [m]
-vz_nom = 15; % nominal climb speed            [m/s]
+vz_nom = 0; % nominal speed: 0 = hover, 15 = climb [m/s]
 Ts = 0.05; % sampling period  (20 Hz)      [s]
-N = 15; % MPC prediction horizon  (1 s)
+N = 40; % MPC prediction horizon  (2 s)
 
 % Rocket visual parameters for animation
 rp.L = 4.0; % total length   [m]
@@ -63,16 +63,22 @@ rk = rank(Cm);
 fprintf('Controllability matrix rank: %d  (need %d)', rk, nx);
 
 %% Cost matrices Q and R
-%         ey   ez   evy  evz  etheta  eq
-Q = diag([5, 0.5, 2, 0.1, 200, 20]);
+%         ey    ez    evy  evz  etheta  eq
+Q = diag([50, 500, 10, 50, 200, 20]);
 %         delta  dT
-R = diag([500, 0.1]);
+R = diag([50, 0.01]);
 
 %% Terminal ingredients
-[P_inf, ~, Kd] = dare(Ad, Bd, Q, R);
+[P_inf, ~, ~] = dare(Ad, Bd, Q, R);
+%             ey ez evy evz etheta eq
+Q_lqr = diag([5, 50, 2, 0.1, 200, 20]);
+%              delta  dT
+R_lqr = diag([500, 0.1]);
+
+[~, ~, Kd] = dare(Ad, Bd, Q_lqr, R_lqr);
 K_lqr = -Kd; % sign convention
 
-% verification of LQR closed-loop stability for terminal set design
+% verification of LQR closed-loop stability
 A_cl = Ad + Bd * K_lqr;
 rho_cl = max(abs(eig(A_cl)));
 fprintf('\n--- Terminal ingredients ---\n');
@@ -92,47 +98,28 @@ assert(rho_cl < 1, 'LQR is not stabilising');
 %    |delta| <= 5°    (gimbal mechanical limit)
 %    |dT| <= 150 N (thrust deviation limit)
 
-e_lb = [-100; -100; -30; -30; -15 * pi / 180; -20 * pi / 180];
-e_ub = [100; 100; 30; 30; 15 * pi / 180; 20 * pi / 180];
+e_lb = [-1; -100; -30; -30; -15 * pi / 180; -20 * pi / 180];
+e_ub = [4; 100; 30; 30; 15 * pi / 180; 20 * pi / 180];
 
 u_lb = [-5 * pi / 180; -150];
 u_ub = [5 * pi / 180; 150];
 
-%% Terminal set with MPT3
-
-% define the system in MPT3
-tvc_sys = LTISystem('A', Ad, 'B', Bd, 'Ts', Ts);
-tvc_sys.x.min = e_lb;
-tvc_sys.x.max = e_ub;
-tvc_sys.u.min = u_lb;
-tvc_sys.u.max = u_ub;
-tvc_sys.x.penalty = QuadFunction(Q);
-tvc_sys.u.penalty = QuadFunction(R);
-
-tvc_sys.x.with('terminalPenalty');
-tvc_sys.x.terminalPenalty = QuadFunction(P_inf);
-
-tvc_sys.x.with('terminalSet');
-X_f = tvc_sys.LQRSet;
-
-fprintf('Terminal set: Chebyshev radius (c) = %.4f', X_f.chebyCenter.r);
-
-% Convert terminal set from MPT3 format to H-representation
-Xf_A = X_f.A;
-Xf_b = X_f.b;
-
 % Initial state w.r.t reference
-e0 = [3; 0; 0; 0; 5 * pi / 180; 0];
+% rocket starts at z=0, which is z_target below the hover reference
+z_target = 20; % hover altitude [m]
+e0 = [3; -z_target; 0; 0; 5 * pi / 180; 0];
 
 %% MPC Simulation
-T_sim = 150;
-x_ref_0 = [0; 0; 0; vz_nom; 0; 0];
+T_sim = 250;
+beta = 3;
 
-fprintf('\n Starting MPC Simulation (N=%d, T_sim=%d) ---\n', N, T_sim);
+x_ref_0 = [0; z_target; 0; vz_nom; 0; 0];
+
+fprintf('\n Starting MPC Simulation (N=%d, T_sim=%d, beta=%g) ---\n', N, T_sim, beta);
 tic;
 [E_mpc, U_mpc, X_world, T_end_mpc, infeasible_mpc] = run_mpc_sim( ...
-    e0, x_ref_0, Ad, Bd, Q, R, P_inf, N, ...
-    e_lb, e_ub, u_lb, u_ub, Xf_A, Xf_b, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
+    e0, x_ref_0, Ad, Bd, Q, R, P_inf, beta, N, ...
+    e_lb, e_ub, u_lb, u_ub, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
     'LiveAnimation', live_animation, 'Rp', rp);
 t_mpc_sim = toc;
 
@@ -153,15 +140,20 @@ for k = 1:T_sim
     u_k = K_lqr * ek;
     U_lqr(:, k) = u_k;
 
+    % saturate to hardware limits to mimic reality for
+    % for simulation but LQR still computed without constraints
+    u_k = max(u_lb, min(u_ub, u_k));
+
     x_next = tvc_nonlinear_step(X_lqr_w(:, k), u_k, m, g, J, l_tvc, T0, Ts);
     X_lqr_w(:, k + 1) = x_next;
-    x_ref_kp1 = [0; vz_nom * k * Ts; 0; vz_nom; 0; 0];
+    x_ref_kp1 = [0; z_target + vz_nom * k * Ts; 0; vz_nom; 0; 0];
     E_lqr(:, k + 1) = x_next - x_ref_kp1;
 
-    if norm(E_lqr(:, k + 1)) < 1e-3
+    if norm(E_lqr(:, k + 1)) < 0.1
         T_end_lqr = k;
         break;
     end
+
 end
 
 E_lqr = E_lqr(:, 1:T_end_lqr + 1);
@@ -182,9 +174,9 @@ results_h = cell(numel(N_study), 1); % for plotting
 for ni = 1:numel(N_study)
     Ni = N_study(ni);
     t0h = tic;
-    
-    [E_h, ~, ~, T_end_h, inf_k] = run_mpc_sim(e0, x_ref_0, Ad, Bd, Q, R, P_inf, Ni, ...
-        e_lb, e_ub, u_lb, u_ub, [], [], T_sim, vz_nom, m, g, J, l_tvc, T0, Ts);
+
+    [E_h, ~, ~, T_end_h, inf_k] = run_mpc_sim(e0, x_ref_0, Ad, Bd, Q, R, P_inf, beta, Ni, ...
+        e_lb, e_ub, u_lb, u_ub, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts);
     solve_t(ni) = toc(t0h);
     results_h{ni} = E_h;
     infeas_step(ni) = inf_k;
@@ -208,30 +200,30 @@ clrs_h = lines(numel(N_study));
 figure('Name', 'Horizon Study', 'NumberTitle', 'off', 'Color', 'w');
 tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-nexttile; 
+nexttile;
 bar(N_study, conv_times, 0.5, 'FaceColor', [0.2 0.45 0.85]);
 xlabel('Horizon N'); ylabel('Time [s]');
 title('Settling / Infeasibility time vs N'); grid on;
 
-nexttile; 
+nexttile;
 bar(N_study, peak_theta, 0.5, 'FaceColor', [0.85 0.2 0.2]);
 xlabel('Horizon N'); ylabel('Peak |\theta|  [deg]');
 title('Peak pitch excursion vs N'); grid on;
 
-nexttile; 
+nexttile;
 bar(N_study, solve_t, 0.5, 'FaceColor', [0.2 0.72 0.2]);
 xlabel('Horizon N'); ylabel('Total solve time [s]');
 title('Computation time vs N'); grid on;
 
 % State trajectory plots
-ax_hey = nexttile; 
-hold on; 
+ax_hey = nexttile;
+hold on;
 grid on;
-ax_hth = nexttile; 
-hold on; 
+ax_hth = nexttile;
+hold on;
 grid on;
-ax_hnm = nexttile; 
-hold on; 
+ax_hnm = nexttile;
+hold on;
 grid on;
 
 for ni = 1:numel(N_study)
@@ -258,19 +250,16 @@ xlabel(ax_hey, 't [s]'); ylabel(ax_hey, 'e_y [m]'); title(ax_hey, 'Lateral error
 xlabel(ax_hth, 't [s]'); ylabel(ax_hth, '\theta [deg]'); title(ax_hth, 'Pitch angle vs horizon'); legend(ax_hth);
 xlabel(ax_hnm, 't [s]'); ylabel(ax_hnm, '||e||_2'); title(ax_hnm, 'Error norm vs horizon'); legend(ax_hnm);
 
-
 %% Weight tuning study
 
 % Tuning scenarios
 W_cases = {
-    diag([5,  0.5, 2, 0.1, 200, 20]), diag([500,  0.1]), 'Nominal  (Q_\theta=200)';
-    diag([5,  0.5, 2, 0.1,  50, 10]), diag([500,  0.1]), 'Low \theta penalty  (Q_\theta=50)';
-    diag([5,  0.5, 2, 0.1, 500, 50]), diag([500,  0.1]), 'High \theta penalty  (Q_\theta=500)';
-    diag([5,  0.5, 2, 0.1, 200, 20]), diag([100,  0.1]), 'Low R_\delta=100  (aggressive gimbal)';
-    diag([5,  0.5, 2, 0.1, 200, 20]), diag([2000, 0.1]), 'High R_\delta=2000  (conservative gimbal)';
-    diag([5,  0.5, 2, 0.1, 200,  5]), diag([500,  0.1]), 'Low Q_q=5  (less rate damping)';
-    diag([50, 0.5, 2, 0.1, 200, 20]), diag([500,  0.1]), 'High Q_{ey}=50  (position priority)';
-};
+           diag([50, 500, 10, 50, 200, 20]), diag([50, 0.01]), 'Nominal';
+           diag([50, 2000, 10, 50, 200, 20]), diag([50, 0.01]), 'High Q_{ez}=2000  (aggressive climb)';
+           diag([50, 500, 10, 50, 200, 20]), diag([5, 0.01]), 'Low R_\delta=5  (aggressive gimbal)';
+           diag([50, 500, 10, 50, 200, 20]), diag([500, 0.01]), 'High R_\delta=500  (conservative gimbal)';
+           diag([50, 500, 10, 50, 20, 20]), diag([50, 0.01]), 'Low Q_\theta=20  (relaxed pitch)';
+           };
 
 % plot settings
 clrs_w = num2cell(lines(size(W_cases, 1)), 2);
@@ -278,29 +267,29 @@ clrs_w = num2cell(lines(size(W_cases, 1)), 2);
 fig_wt = figure('Name', 'Weight Tuning', 'NumberTitle', 'off', 'Color', 'w');
 tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 ax_wy = nexttile;
-hold(ax_wy, 'on'); 
+hold(ax_wy, 'on');
 grid(ax_wy, 'on');
 title(ax_wy, 'Lateral position  e_y');
-ylabel(ax_wy, 'e_y [m]'); 
+ylabel(ax_wy, 'e_y [m]');
 xlabel(ax_wy, 't [s]');
 
-ax_wth = nexttile; 
-hold(ax_wth, 'on'); 
+ax_wth = nexttile;
+hold(ax_wth, 'on');
 grid(ax_wth, 'on');
 title(ax_wth, 'Pitch angle  \theta');
-ylabel(ax_wth, '\theta [deg]'); 
+ylabel(ax_wth, '\theta [deg]');
 xlabel(ax_wth, 't [s]');
 
-ax_wd = nexttile; hold(ax_wd, 'on'); 
+ax_wd = nexttile; hold(ax_wd, 'on');
 grid(ax_wd, 'on');
 title(ax_wd, 'Gimbal angle  \delta');
-ylabel(ax_wd, '\delta [deg]'); 
+ylabel(ax_wd, '\delta [deg]');
 xlabel(ax_wd, 't [s]');
 
-ax_wn = nexttile; hold(ax_wn, 'on'); 
+ax_wn = nexttile; hold(ax_wn, 'on');
 grid(ax_wn, 'on');
 title(ax_wn, 'Error norm  \|e\|_2');
-ylabel(ax_wn, '\|e\|_2  (log)'); 
+ylabel(ax_wn, '\|e\|_2  (log)');
 xlabel(ax_wn, 't [s]');
 
 % runs MPC simulation for each case and plot results
@@ -311,8 +300,8 @@ for wi = 1:size(W_cases, 1)
     rho_i = max(abs(eig(Ad + Bd * Ki)));
     fprintf('  Case %d (%s): rho=%.4f\n', wi, lbl, rho_i);
 
-    [E_w, U_w, ~, T_end_w, inf_kw] = run_mpc_sim(e0, x_ref_0, Ad, Bd, Qi, Ri, Pi, N, ...
-        e_lb, e_ub, u_lb, u_ub, [], [], T_sim, vz_nom, m, g, J, l_tvc, T0, Ts);
+    [E_w, U_w, ~, T_end_w, inf_kw] = run_mpc_sim(e0, x_ref_0, Ad, Bd, Qi, Ri, Pi, beta, N, ...
+        e_lb, e_ub, u_lb, u_ub, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts);
 
     if inf_kw > 0
         fprintf('  Case %d (%s): INFEASIBLE at k=%d (t=%.2f s)\n', wi, lbl, inf_kw, inf_kw * Ts);
@@ -340,7 +329,6 @@ legend(ax_wth, 'Location', 'northeast', 'FontSize', 7);
 legend(ax_wd, 'Location', 'northeast', 'FontSize', 7);
 legend(ax_wn, 'Location', 'northeast', 'FontSize', 7);
 
-
 %% Disturbance rejection
 
 % define a lateral gust disturbance
@@ -353,8 +341,8 @@ D_gust = zeros(nx, T_sim);
 D_gust(3, gust_k:gust_k + gust_dur - 1) = gust_force / m * Ts;
 
 [E_dist, U_dist, ~, T_end_dist, infeas_dist] = run_mpc_sim( ...
-    e0, x_ref_0, Ad, Bd, Q, R, P_inf, N, ...
-    e_lb, e_ub, u_lb, u_ub, [], [], T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
+    e0, x_ref_0, Ad, Bd, Q, R, P_inf, beta, N, ...
+    e_lb, e_ub, u_lb, u_ub, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
     'ConvTol', 5e-3, 'D', D_gust);
 
 figure('Name', 'Disturbance Rejection', 'NumberTitle', 'off', 'Color', 'w');
@@ -386,22 +374,42 @@ title('Pitch angle during gust');
 %    theta  : ±1 deg
 %    q      : ±2 deg/s
 
-fprintf('\nKalman filter\n');
+fprintf('\nAugmented Kalman filter (state + output bias)\n');
 
 % Output feedback: only positions from GPS and attitude from IMU are measured.
-Cd = [1 0 0 0 0 0;   % ey
-      0 1 0 0 0 0;   % ez
-      0 0 0 0 1 0;   % etheta
-      0 0 0 0 0 1];  % eq
+Cd = [1 0 0 0 0 0; % ey
+      0 1 0 0 0 0; % ez
+      0 0 0 0 1 0; % etheta
+      0 0 0 0 0 1]; % eq
 
 ny = size(Cd, 1);
 
-% Observability check
+% Observability check on original system
 Ob = obsv(Ad, Cd);
 fprintf('Observability rank: %d  (need %d)\n', rank(Ob), nx);
 
-% Process noise covariance Qn (model uncertainty)
-Qn = diag([0.01; 0.01; 0.10; 0.10; (0.5 * pi / 180) ^ 2; (1 * pi / 180) ^ 2]);
+% Disturbance model: constant output bias on attitude measurements only (nd = 2).
+% ey and ez are z=1 eigenvectors of Ad (position integrators), so a bias on those
+% output channels would be indistinguishable from the free-integrator modes,
+% making the augmented system unobservable. Bias on theta/q (IMU) avoids this.
+nd = 2;
+Bd_dist = zeros(nx, nd); % disturbance does not enter dynamics
+Cd_dist = [0, 0; 0, 0; 1, 0; 0, 1]; % bias on theta and q channels only
+
+% Augmented system:  xi = [x; d],  xi+ = A_aug*xi + B_aug*u,  y = C_aug*xi
+A_aug = [Ad, Bd_dist;
+         zeros(nd, nx), eye(nd)];
+B_aug = [Bd; zeros(nd, nu)];
+C_aug = [Cd, Cd_dist];
+
+% Observability check on augmented system
+Ob_aug = obsv(A_aug, C_aug);
+fprintf('Augmented observability rank: %d  (need %d)\n', rank(Ob_aug), nx + nd);
+
+% Process noise covariance for augmented state [x; d_theta; d_q]
+% d is nearly constant (slow-drifting IMU bias) so its process noise is very small.
+Qn_aug = blkdiag(diag([0.01; 0.01; 0.10; 0.10; (0.5 * pi / 180) ^ 2; (1 * pi / 180) ^ 2]), ...
+    (1e-6) * eye(nd));
 
 % Measurement noise covariance Rn (measurement uncertainty)
 sigma_y = 0.50;
@@ -409,20 +417,23 @@ sigma_th = 1 * pi / 180;
 sigma_q = 2 * pi / 180;
 Rn = diag([sigma_y ^ 2; sigma_y ^ 2; sigma_th ^ 2; sigma_q ^ 2]);
 
-% Steady-state Kalman gain via dlqe
-[L_kf, ~] = dlqe(Ad, eye(nx), Cd, Qn, Rn);
+% Steady-state Kalman gain on augmented system
+[L_aug, ~] = dlqe(A_aug, eye(nx + nd), C_aug, Qn_aug, Rn);
+L1 = L_aug(1:nx, :); % gain for state x-hat
+L2 = L_aug(nx + 1:end, :); % gain for disturbance d-hat
 
-% Observer error dynamics: eigenvalues of (I - L_kf*Cd)*Ad (corrector form)
-eigs_obs = eig((eye(nx) - L_kf * Cd) * Ad);
-fprintf('Kalman gain max singular value:    %.4f\n', max(svd(L_kf)));
-fprintf('Observer error max|eig|:           %.6f  (must be < 1)\n', max(abs(eigs_obs)));
+% Observer stability: eig(A_aug - L_aug*C_aug) must be strictly inside unit disk
+eigs_obs = eig(A_aug - L_aug * C_aug);
+fprintf('Kalman gain max singular value:    %.4f\n', max(svd(L_aug)));
+fprintf('Augmented observer max|eig|:       %.6f  (must be < 1)\n', max(abs(eigs_obs)));
 
 % run MPC simulation with observer and measurement noise
 rng(42);
 [E_obs, U_obs, ~, T_end_obs, infeas_obs, ~, E_hat] = run_mpc_sim( ...
-    e0, x_ref_0, Ad, Bd, Q, R, P_inf, N, ...
-    e_lb, e_ub, u_lb, u_ub, [], [], T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
-    'Lkf', L_kf, 'Cd', Cd, 'Rn', Rn, 'LiveAnimation', live_animation, 'Rp', rp);
+    e0, x_ref_0, Ad, Bd, Q, R, P_inf, beta, N, ...
+    e_lb, e_ub, u_lb, u_ub, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
+    'Lkf', L_aug, 'Cd', Cd, 'Aaug', A_aug, 'Baug', B_aug, 'Caug', C_aug, ...
+    'Rn', Rn, 'LiveAnimation', live_animation, 'Rp', rp);
 fprintf('Observer-based MPC converged at t = %.2f s\n', T_end_obs * Ts);
 
 figure('Name', 'Observer MPC with Measurement Noise', 'NumberTitle', 'off', 'Color', 'w');
@@ -447,30 +458,11 @@ yline(rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 ylabel('\theta [deg]'); xlabel('t [s]');
 title('Pitch angle — observer tracking');
 
-%% =========================================================================
-%%  16. FINAL SUMMARY PLOTS
-%% =========================================================================
+%%  Final plots
 fprintf('\n--- Generating final summary plots ---\n');
 
 t_mpc_v = (0:T_end_mpc) * Ts;
 t_lqr_v = (0:T_end_lqr) * Ts;
 
 plot_results_tvc(t_mpc_v, E_mpc, U_mpc, t_lqr_v, E_lqr, U_lqr, ...
-    e_lb, e_ub, u_lb, u_ub, vz_nom);
-
-%% =========================================================================
-%%  17. FINAL REPORT
-%% =========================================================================
-fprintf('\n========== FINAL REPORT ==========\n');
-fprintf('System:  m=%g kg  T0=%.1f N  J=%g kg.m^2  l_tvc=%g m\n', m, T0, J, l_tvc);
-fprintf('LQR spectral radius:         %.6f\n', rho_cl);
-fprintf('Terminal set Chebyshev r:    %.4f\n', X_f.chebyCenter.r);
-fprintf('\nMPC  convergence: t = %.2f s   ||e_final|| = %.6f\n', ...
-    T_end_mpc * Ts, norm(E_mpc(:, end)));
-fprintf('LQR  convergence: t = %.2f s   ||e_final|| = %.6f\n', ...
-    T_end_lqr * Ts, norm(E_lqr(:, end)));
-fprintf('\nHorizon study:  N = %s\n', mat2str(N_study));
-fprintf('  Settling:     %s s\n', mat2str(conv_times, 3));
-fprintf('  Peak theta:   %s deg\n', mat2str(peak_theta, 3));
-fprintf('  Solve time:   %s s\n', mat2str(solve_t, 3));
-fprintf('=====================================\n');
+    e_lb, e_ub, u_lb, u_ub, vz_nom, z_target);

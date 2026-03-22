@@ -1,5 +1,5 @@
 function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
-                          e_lb, e_ub, u_lb, u_ub, vz_nom)
+                          e_lb, e_ub, u_lb, u_ub, vz_nom, z_target)
 % PLOT_RESULTS_TVC  Static summary figures after TVC MPC simulation
 %
 % Produces six figures:
@@ -22,9 +22,9 @@ hold on; grid on;
 
 % Reconstruct world-frame positions: y_world = e_y (y_nom=0), z_world = e_z + vz_nom*t
 y_mpc = X_mpc(1,:);
-z_mpc = X_mpc(2,:) + vz_nom .* t_mpc;
+z_mpc = X_mpc(2,:) + z_target + vz_nom .* t_mpc;
 y_lqr = X_lqr(1,:);
-z_lqr = X_lqr(2,:) + vz_nom .* t_lqr;
+z_lqr = X_lqr(2,:) + z_target + vz_nom .* t_lqr;
 
 % Reference line
 z_all = [z_mpc, z_lqr];
