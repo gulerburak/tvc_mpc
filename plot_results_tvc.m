@@ -121,7 +121,7 @@ figure('Name','Convergence','NumberTitle','off','Color','w');
 hold on; grid on;
 semilogy(t_mpc, vecnorm(X_mpc), '-',  'Color',clr_mpc,'LineWidth',1.8,'DisplayName','MPC');
 semilogy(t_lqr, vecnorm(X_lqr), '--', 'Color',clr_lqr,'LineWidth',1.5,'DisplayName','LQR');
-xlabel('t  [s]'); ylabel('log  \|e\|_2');
+xlabel('t  [s]'); ylabel('log  ||e||_2');
 title('Error-norm convergence  (error-state coordinates)');
 legend; set(gca,'FontSize',10);
 
