@@ -10,6 +10,13 @@ function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
 %   5. Error-norm convergence (log scale)
 %   6. Phase portrait: y vs theta
 
+FIG_DIR = fullfile(fileparts(mfilename('fullpath')), 'report', 'figures');
+if ~exist(FIG_DIR, 'dir'); mkdir(FIG_DIR); end
+fprintf('Saving figures to:  %s\n', FIG_DIR);
+
+savepdf = @(fig, name) exportgraphics(fig, fullfile(FIG_DIR, name), ...
+    'ContentType','vector','BackgroundColor','white');
+
 clr_safe = [0.85 1.00 0.85];
 clr_mpc  = [0.20 0.45 0.85];
 clr_lqr  = [0.85 0.20 0.20];
@@ -41,6 +48,10 @@ title('World-frame 2-D trajectories: MPC vs LQR');
 legend('Location','northwest'); grid on;
 set(gca,'FontSize',10);
 
+exportgraphics(gcf, 'myplot.pdf', 'ContentType', 'vector');
+savepdf(gca, 'fig_2d_world_trajectories.pdf');
+
+
 %% Figure 2 — Lateral position and pitch angle
 figure('Name','Lateral & Pitch','NumberTitle','off','Color','w');
 tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
@@ -67,6 +78,8 @@ for i = 1:2
     legend('Location','northeast','FontSize',7);
 end
 
+savepdf(gca, 'lateral_pos_and_pitch_angle.pdf');
+
 %% Figure 3 — Velocities
 figure('Name','Velocities','NumberTitle','off','Color','w');
 tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
@@ -87,6 +100,8 @@ for i = 1:2
     xlabel('t [s]'); ylabel(vel_labels{i}); title(vel_labels{i},'FontSize',10);
     legend('Location','northeast','FontSize',7);
 end
+
+savepdf(gca, 'velocities.pdf');
 
 %% Figure 4 — Control inputs
 figure('Name','Control Inputs','NumberTitle','off','Color','w');
@@ -116,6 +131,8 @@ for i = 1:2
     legend('Location','northeast','FontSize',7);
 end
 
+savepdf(gca, 'control_inputs.pdf');
+
 %% Figure 5 — Error-norm convergence
 figure('Name','Convergence','NumberTitle','off','Color','w');
 hold on; grid on;
@@ -124,6 +141,8 @@ semilogy(t_lqr, vecnorm(X_lqr), '--', 'Color',clr_lqr,'LineWidth',1.5,'DisplayNa
 xlabel('t  [s]'); ylabel('log  ||e||_2');
 title('Error-norm convergence  (error-state coordinates)');
 legend; set(gca,'FontSize',10);
+
+savepdf(gca, 'error_norm_convergence.pdf');
 
 %% Figure 6 — Phase portrait: lateral position vs pitch angle
 figure('Name','Phase Portrait','NumberTitle','off','Color','w');
@@ -137,4 +156,6 @@ xline(rad2deg(e_ub(5)),'k--','LineWidth',0.8,'DisplayName','Constraints');
 xlabel('\theta  [deg]'); ylabel('e_y  [m]');
 title('Phase portrait: lateral error vs pitch angle');
 legend('Location','northwest'); set(gca,'FontSize',10);
+
+savepdf(gca, 'phase_portrait.pdf');
 end
