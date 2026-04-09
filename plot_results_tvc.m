@@ -25,31 +25,35 @@ tmax = max(t_mpc(end), t_lqr(end));
 
 %% Figure 1 — 2-D world trajectories
 figure('Name','2-D World Trajectories','NumberTitle','off','Color','w');
-hold on; grid on;
+hold on; grid on; box on;
 
-% Reconstruct world-frame positions: y_world = e_y (y_nom=0), z_world = e_z + vz_nom*t
+% Reconstruct world-frame positions
 y_mpc = X_mpc(1,:);
 z_mpc = X_mpc(2,:) + z_target + vz_nom .* t_mpc;
 y_lqr = X_lqr(1,:);
 z_lqr = X_lqr(2,:) + z_target + vz_nom .* t_lqr;
 
-% Reference line
+% Vertical reference line (y = 0)
 z_all = [z_mpc, z_lqr];
-plot([0 0], [min(z_all)-5, max(z_all)+5], '--', ...
-     'Color',[0.10 0.72 0.22], 'LineWidth',1.5, 'DisplayName','Reference y=0');
+plot([0 0], [min(z_all)-2, max(z_all)+2], '--', ...
+     'Color',[0.10 0.72 0.22], 'LineWidth',1.2, 'DisplayName','y = 0  (target)');
 
 plot(y_mpc, z_mpc, '-',  'Color',clr_mpc, 'LineWidth',2.0, 'DisplayName','MPC');
 plot(y_lqr, z_lqr, '--', 'Color',clr_lqr, 'LineWidth',2.0, 'DisplayName','LQR');
 
-scatter(y_mpc(1), z_mpc(1), 120, 'k', 'filled', 'DisplayName','Start');
+% Start and end markers
+scatter(y_mpc(1),   z_mpc(1),   100, 'k',       'filled', 'DisplayName','Start');
+scatter(y_mpc(end), z_mpc(end), 100, clr_mpc,   'filled', 'HandleVisibility','off');
+scatter(y_lqr(end), z_lqr(end), 100, clr_lqr,   'filled', 'HandleVisibility','off');
+
 xlabel('y  [m]  (lateral)');
 ylabel('z  [m]  (altitude)');
 title('World-frame 2-D trajectories: MPC vs LQR');
-legend('Location','northwest'); grid on;
+legend('Location','northwest','FontSize',9);
+axis equal;
 set(gca,'FontSize',10);
 
-exportgraphics(gcf, 'myplot.pdf', 'ContentType', 'vector');
-savepdf(gca, 'fig_2d_world_trajectories.pdf');
+savepdf(gcf, 'fig_2d_world_trajectories.pdf');
 
 
 %% Figure 2 — Lateral position and pitch angle
@@ -78,7 +82,7 @@ for i = 1:2
     legend('Location','northeast','FontSize',7);
 end
 
-savepdf(gca, 'lateral_pos_and_pitch_angle.pdf');
+savepdf(gcf, 'lateral_pos_and_pitch_angle.pdf');
 
 %% Figure 3 — Velocities
 figure('Name','Velocities','NumberTitle','off','Color','w');
@@ -124,14 +128,22 @@ for i = 1:2
                'Color',clr_mpc,'LineWidth',1.8,'DisplayName','MPC');
     end
     if size(U_lqr,2) > 0
-        stairs(t_lqr(1:end-1), u_scales(i)*U_lqr(i,:), '--', ...
-               'Color',clr_lqr,'LineWidth',1.5,'DisplayName','LQR');
+        U_lqr_sat = min(u_ub(i), max(u_lb(i), U_lqr(i,:)));
+        % saturated input (what plant receives)
+        stairs(t_lqr(1:end-1), u_scales(i)*U_lqr_sat, '-', ...
+               'Color',clr_lqr,'LineWidth',2.0,'DisplayName','LQR (saturated)');
+        % out-of-bounds portion only (unsaturated command beyond limits)
+        U_lqr_raw = u_scales(i)*U_lqr(i,:);
+        U_oob = U_lqr_raw;
+        U_oob(U_lqr_raw >= lb_u & U_lqr_raw <= ub_u) = NaN;
+        stairs(t_lqr(1:end-1), U_oob, '-', ...
+               'Color',[0.55 0.00 0.85],'LineWidth',2.0,'DisplayName','LQR (unsaturated)');
     end
     xlabel('t [s]'); ylabel(u_labels{i}); title(u_labels{i},'FontSize',10);
     legend('Location','northeast','FontSize',7);
 end
 
-savepdf(gca, 'control_inputs.pdf');
+savepdf(gcf, 'control_inputs.pdf');
 
 %% Figure 5 — Error-norm convergence
 figure('Name','Convergence','NumberTitle','off','Color','w');
