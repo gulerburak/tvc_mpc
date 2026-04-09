@@ -14,8 +14,8 @@
 required = {'E_mpc','U_mpc','E_lqr','U_lqr','X_world','Ts','e_lb','e_ub', ...
             'u_lb','u_ub','N_study','conv_times','peak_theta','solve_t', ...
             'Ad','Bd','Q','R','P_inf','K_lqr','m','g','J','l_tvc','T0', ...
-            'vz_nom','N','rp','Xf_A','Xf_b', ...
-            'E_obs','E_hat','L_kf','Rn','T_end_mpc','T_end_obs'};
+            'vz_nom','N','rp', ...
+            'E_obs','E_hat','Rn','T_end_mpc','T_end_obs'};
 for i = 1:numel(required)
     if ~exist(required{i}, 'var')
         error('Variable ''%s'' not found. Run main_tvc_mpc.m first.', required{i});
@@ -54,7 +54,7 @@ T_mpc = (0:size(E_mpc,2)-1)*Ts;
 T_lqr = (0:size(E_lqr,2)-1)*Ts;
 tmax  = max(T_mpc(end), T_lqr(end));
 
-fig1 = make_fig(16, 18);
+fig1 = make_fig(16*2, 18*2);
 tiledlayout(fig1, 3, 1, 'TileSpacing','compact','Padding','compact');
 
 % Panel 1: lateral error
@@ -114,7 +114,7 @@ fprintf('  Saved fig_mpc_vs_lqr.pdf\n');
 % =========================================================================
 k_snap = min(round(1.0/Ts) + 1, size(X_world,2));  % column index at t ≈ 1 s
 
-fig2 = make_fig(16, 10);
+fig2 = make_fig(16*2, 10*2);
 ax_r = subplot(1,2,1);
 ax_s = subplot(1,2,2);
 
@@ -145,7 +145,7 @@ fprintf('  Saved fig_animation.pdf\n');
 % =========================================================================
 %% FIGURE 3 — Horizon study
 % =========================================================================
-fig3 = make_fig(16, 9);
+fig3 = make_fig(16*2, 9*2);
 tiledlayout(fig3, 1, 3, 'TileSpacing','compact','Padding','compact');
 
 nexttile;
@@ -188,7 +188,7 @@ e0 = E_mpc(:,1);   % same initial condition as main simulation
 x_ref_0 = [0; 0; 0; vz_nom; 0; 0];
 T_sim_w = round(min(size(E_mpc,2), 200)) - 1;
 
-fig4 = make_fig(16, 18);
+fig4 = make_fig(16*2, 18*2);
 tiledlayout(fig4, 2, 2, 'TileSpacing','compact','Padding','compact');
 ax4 = gobjects(4,1);
 for i = 1:4; ax4(i) = nexttile; hold(ax4(i),'on'); grid(ax4(i),'on'); end
@@ -288,7 +288,7 @@ E_dist = E_dist(:, 1:T_end_d+1);
 T_mpc_d = (0:size(E_mpc,2)-1)*Ts;
 T_dist  = (0:T_end_d)*Ts;
 
-fig5 = make_fig(16, 13);
+fig5 = make_fig(16*2, 13*2);
 tiledlayout(fig5, 2, 1, 'TileSpacing','compact','Padding','compact');
 
 ax = nexttile; hold on; grid on;
@@ -331,7 +331,7 @@ sigma_str = sprintf('GPS $\\pm%.2f$ m, IMU $\\pm%.0f^{\\circ}$', ...
 T_kf = (0:T_end_obs)*Ts;
 T_cl = (0:T_end_mpc)*Ts;
 
-fig6 = make_fig(16, 15);
+fig6 = make_fig(16*2, 15*2);
 tiledlayout(fig6, 2, 1, 'TileSpacing','compact','Padding','compact');
 
 % Panel 1: lateral error
