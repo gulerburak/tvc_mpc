@@ -1,17 +1,6 @@
 function [u_opt, U_seq, feasible] = solve_mpc_tvc(e0, Ad, Bd, Q, R, P_inf, beta, N, ...
         e_lb, e_ub, u_lb, u_ub)
-    % SOLVE_MPC_TVC  YALMIP QP — Approach 3: weighted terminal cost, no terminal set constraint
-    %
-    % Solves:
-    %   min   beta * e_N' P_inf e_N  +  sum_{k=0}^{N-1} [ e_k'Q e_k + u_k'R u_k ]
-    %   s.t.  e_{k+1} = Ad*e_k + Bd*u_k
-    %         e_lb <= e_k <= e_ub          (hard state constraints)
-    %         u_lb <= u_k <= u_ub          (hard input constraints)
-    %         e_0 = e0
-    %
-    %   beta >= 1 replaces the hard terminal set constraint: the optimizer is
-    %   penalized heavily for large e_N, implicitly driving it toward X_f.
-    %
+    % SOLVE_MPC_TVC 
     % Arguments
     %   e0          initial error state (nx x 1)
     %   Ad, Bd      discrete-time LTI matrices
