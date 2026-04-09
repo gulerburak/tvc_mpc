@@ -25,6 +25,8 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
     % Rn             measurement noise covariance
     % LiveAnimation  show animation during simulation
     % Rp             rocket visual parameters struct
+    % SaveMp4        save animation to MP4 file (default false)
+    % Mp4File        output filename (default 'tvc_animation.mp4')
     %
     % Returns:
     % E            true error state trajectory
@@ -67,6 +69,8 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         opts.Rn = []
         opts.LiveAnimation (1, 1) logical = false
         opts.Rp = []
+        opts.SaveMp4 (1, 1) logical = false
+        opts.Mp4File = 'tvc_animation.mp4'
     end
 
     use_observer = ~isempty(opts.Lkf);
@@ -91,6 +95,18 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
 
     if opts.LiveAnimation
         fig = figure('Color', 'w', 'Position', [40 60 1400 560], 'Name', 'TVC MPC');
+    end
+
+    vw = [];
+    if opts.SaveMp4
+        if ~opts.LiveAnimation
+            fig = figure('Color', 'w', 'Position', [40 60 1400 560], 'Name', 'TVC MPC', 'Visible', 'off');
+        end
+        [fdir, fname] = fileparts(opts.Mp4File);
+        avi_file = fullfile(fdir, [fname '.avi']);
+        vw = VideoWriter(avi_file, 'Motion JPEG AVI');
+        vw.FrameRate = round(1 / Ts);
+        open(vw);
     end
 
     for k = 1:T_sim
@@ -145,7 +161,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
 
         E_hat(:, k + 1) = e_hat;
 
-        if opts.LiveAnimation
+        if opts.LiveAnimation || opts.SaveMp4
             pred_world = zeros(2, N + 1);
             pred_world(:, 1) = X(1:2, k);
             e_tmp = E(:, k);
@@ -161,8 +177,13 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
             ax_states = subplot(1, 2, 2);
             draw_tvc_frame(ax_rocket, ax_states, X(:, 1:k + 1), U(:, 1:k), ...
                 pred_world, k * Ts, N, T_sim, Ts, opts.Rp);
-            drawnow limitrate;
-            pause(0.01);
+            drawnow;
+            if ~isempty(vw)
+                writeVideo(vw, getframe(fig));
+            end
+            if opts.LiveAnimation
+                pause(0.01);
+            end
         end
 
         if norm(E(:, k + 1)) < opts.ConvTol
@@ -170,6 +191,15 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
             break;
         end
 
+    end
+
+    if ~isempty(vw)
+        close(vw);
+        [fdir, fname] = fileparts(opts.Mp4File);
+        fprintf('Animation saved to %s\n', fullfile(fdir, [fname '.avi']));
+        if ~opts.LiveAnimation
+            close(fig);
+        end
     end
 
     E = E(:, 1:T_end + 1);
