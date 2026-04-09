@@ -132,11 +132,11 @@ b2w = @(xb, zb) [y_cg + xb.*cos(theta) + zb.*sin(theta); ...
 % ---- Fuselage ----
 fu = [b2w(-W/2, -h_below), b2w(W/2, -h_below), ...
       b2w( W/2,  h_above), b2w(-W/2,  h_above)];
-fill(ax, fu(1,:), fu(2,:), [0.72 0.72 0.78], 'EdgeColor','k', 'LineWidth',1.0);
+fill(ax, fu(1,:), fu(2,:), [0.72 0.72 0.78], 'EdgeColor','k', 'LineWidth',1.0, 'HandleVisibility','off');
 
 % ---- Nose cone ----
 nose = [b2w(-W/2, h_above), b2w(W/2, h_above), b2w(0, h_above + 0.18*L)];
-fill(ax, nose(1,:), nose(2,:), [0.88 0.22 0.22], 'EdgeColor','k', 'LineWidth',1.0);
+fill(ax, nose(1,:), nose(2,:), [0.88 0.22 0.22], 'EdgeColor','k', 'LineWidth',1.0, 'HandleVisibility','off');
 
 % ---- Fins ----
 fin_h = 0.38 * h_below;
@@ -147,8 +147,8 @@ fin_L = [b2w(-W/2,         -h_below), ...
 fin_R = [b2w( W/2,         -h_below), ...
          b2w( W/2 + fin_w, -h_below), ...
          b2w( W/2,         -h_below + fin_h)];
-fill(ax, fin_L(1,:), fin_L(2,:), [0.48 0.48 0.54], 'EdgeColor','k','LineWidth',0.8);
-fill(ax, fin_R(1,:), fin_R(2,:), [0.48 0.48 0.54], 'EdgeColor','k','LineWidth',0.8);
+fill(ax, fin_L(1,:), fin_L(2,:), [0.48 0.48 0.54], 'EdgeColor','k', 'LineWidth',0.8, 'HandleVisibility','off');
+fill(ax, fin_R(1,:), fin_R(2,:), [0.48 0.48 0.54], 'EdgeColor','k', 'LineWidth',0.8, 'HandleVisibility','off');
 
 % ---- Exhaust plume ----
 t_dir = [sin(theta+delta);  cos(theta+delta)];   % thrust direction (world)
@@ -165,15 +165,15 @@ pl_right = noz - W_pl/2 * p_dir;
 
 fill(ax, [pl_left(1) pl_right(1) pl_tip(1)], ...
          [pl_left(2) pl_right(2) pl_tip(2)], ...
-     [1.00 0.55 0.10], 'EdgeColor','none', 'FaceAlpha', 0.82);
+     [1.00 0.55 0.10], 'EdgeColor','none', 'FaceAlpha', 0.82, 'HandleVisibility','off');
 
 pl_tip2   = noz - L_pl*0.58 * t_dir;
 pl_left2  = noz + W_pl*0.30 * p_dir;
 pl_right2 = noz - W_pl*0.30 * p_dir;
 fill(ax, [pl_left2(1) pl_right2(1) pl_tip2(1)], ...
          [pl_left2(2) pl_right2(2) pl_tip2(2)], ...
-     [1.00 0.98 0.72], 'EdgeColor','none', 'FaceAlpha', 0.95);
+     [1.00 0.98 0.72], 'EdgeColor','none', 'FaceAlpha', 0.95, 'HandleVisibility','off');
 
 % ---- CG marker ----
-plot(ax, y_cg, z_cg, '+', 'Color','k', 'MarkerSize',6, 'LineWidth',1.5);
+plot(ax, y_cg, z_cg, '+', 'Color','k', 'MarkerSize',6, 'LineWidth',1.5, 'HandleVisibility','off');
 end
