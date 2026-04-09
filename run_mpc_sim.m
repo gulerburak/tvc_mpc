@@ -98,6 +98,13 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
             e_lb, e_ub, u_lb, u_ub);
 
         if ~ok
+            fprintf('--- INFEASIBLE at k=%d (t=%.2f s) ---\n', k, k * Ts);
+            fprintf('  e_hat : ey=%.3f  ez=%.3f  vy=%.3f  vz=%.3f  th=%.3f deg  q=%.3f deg/s\n', ...
+                e_hat(1), e_hat(2), e_hat(3), e_hat(4), rad2deg(e_hat(5)), rad2deg(e_hat(6)));
+            fprintf('  E_true: ey=%.3f  ez=%.3f  vy=%.3f  vz=%.3f  th=%.3f deg  q=%.3f deg/s\n', ...
+                E(1,k), E(2,k), E(3,k), E(4,k), rad2deg(E(5,k)), rad2deg(E(6,k)));
+            e_next0 = Ad * e_hat;
+            fprintf('  Ad*e_hat (u=0): ey=%.3f  [lb=%.3f ub=%.3f]\n', e_next0(1), e_lb(1), e_ub(1));
             warning('MPC infeasible at k=%d (t=%.2f s)', k, k * Ts);
             infeasible_k = k;
             T_end = k - 1;
