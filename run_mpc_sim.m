@@ -6,35 +6,35 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
     % Parameters:
     % e0, x_ref_0        initial error state and world reference state
     % Ad, Bd             discrete TVC model
-    % Q, R, P_inf        stage and terminal cost matrices (Approach 3)
-    % beta               terminal cost weight (>= 1); replaces terminal set constraint
+    % Q, R, P_inf        stage and terminal cost matrices
+    % beta               beta
     % N                  prediction horizon
     % e_lb/ub, u_lb/ub   state and input constraints
     % T_sim              simulation steps
     % vz_nom             nominal vz
-    % m,g,J,l_tvc,T0,Ts  simulation parameters 
+    % m,g,J,l_tvc,T0,Ts  simulation parameters
     %
     % Optional parameters:
     % ConvTol        convergence tolerance
     % D              state disturbance
-    % Lkf            Kalman gain (nx×ny non-augmented, or (nx+nd)×ny augmented)
-    % Cd             measurement matrix for original state (used for y generation)
-    % Aaug           augmented A matrix [Ad, Bd_dist; 0, I]   (optional)
-    % Baug           augmented B matrix [Bd; 0]               (optional)
-    % Caug           augmented output matrix [Cd, Cd_dist]    (optional)
+    % Lkf            Kalman gain
+    % Cd             measurement matrix for original state
+    % Aaug           augmented A matrix
+    % Baug           augmented B matrix
+    % Caug           augmented output matrix
     % Rn             measurement noise covariance
     % LiveAnimation  show animation during simulation
     % Rp             rocket visual parameters struct
-    % SaveMp4        save animation to MP4 file (default false)
-    % Mp4File        output filename (default 'tvc_animation.mp4')
+    % SaveMp4        save animation to MP4 file
+    % Mp4File        output filename
     %
     % Returns:
     % E            true error state trajectory
-    % U            input trajectory              
-    % X            world-frame trajectory        
+    % U            input trajectory
+    % X            world-frame trajectory
     % T_end        index of last completed step
     % infeasible_k step of first infeasibility   (0 if never)
-    % U_seqs       predicted input sequences 
+    % U_seqs       predicted input sequences
     % E_hat        KF estimated error state (equals E when no observer is used)
 
     arguments
@@ -89,6 +89,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
 
     e_hat = e0;
     use_aug = use_observer && ~isempty(opts.Aaug);
+
     if use_aug
         xi_hat = [e0; zeros(size(opts.Aaug, 1) - nx, 1)];
     end
@@ -98,10 +99,13 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
     end
 
     vw = [];
+
     if opts.SaveMp4
+
         if ~opts.LiveAnimation
             fig = figure('Color', 'w', 'Position', [40 60 1400 560], 'Name', 'TVC MPC', 'Visible', 'off');
         end
+
         [fdir, fname] = fileparts(opts.Mp4File);
         avi_file = fullfile(fdir, [fname '.avi']);
         vw = VideoWriter(avi_file, 'Motion JPEG AVI');
@@ -118,7 +122,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
             fprintf('  e_hat : ey=%.3f  ez=%.3f  vy=%.3f  vz=%.3f  th=%.3f deg  q=%.3f deg/s\n', ...
                 e_hat(1), e_hat(2), e_hat(3), e_hat(4), rad2deg(e_hat(5)), rad2deg(e_hat(6)));
             fprintf('  E_true: ey=%.3f  ez=%.3f  vy=%.3f  vz=%.3f  th=%.3f deg  q=%.3f deg/s\n', ...
-                E(1,k), E(2,k), E(3,k), E(4,k), rad2deg(E(5,k)), rad2deg(E(6,k)));
+                E(1, k), E(2, k), E(3, k), E(4, k), rad2deg(E(5, k)), rad2deg(E(6, k)));
             e_next0 = Ad * e_hat;
             fprintf('  Ad*e_hat (u=0): ey=%.3f  [lb=%.3f ub=%.3f]\n', e_next0(1), e_lb(1), e_ub(1));
             warning('MPC infeasible at k=%d (t=%.2f s)', k, k * Ts);
@@ -147,6 +151,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
             ny_obs = size(opts.Cd, 1);
             noise = sqrt(diag(opts.Rn)) .* randn(ny_obs, 1);
             y_meas = opts.Cd * E(:, k + 1) + noise;
+
             if use_aug
                 xi_hat_pred = opts.Aaug * xi_hat + opts.Baug * u_k;
                 xi_hat = xi_hat_pred + opts.Lkf * (y_meas - opts.Caug * xi_hat_pred);
@@ -155,6 +160,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
                 e_hat_pred = Ad * e_hat + Bd * u_k;
                 e_hat = e_hat_pred + opts.Lkf * (y_meas - opts.Cd * e_hat_pred);
             end
+
         else
             e_hat = E(:, k + 1);
         end
@@ -178,12 +184,15 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
             draw_tvc_frame(ax_rocket, ax_states, X(:, 1:k + 1), U(:, 1:k), ...
                 pred_world, k * Ts, N, T_sim, Ts, opts.Rp);
             drawnow;
+
             if ~isempty(vw)
                 writeVideo(vw, getframe(fig));
             end
+
             if opts.LiveAnimation
                 pause(0.01);
             end
+
         end
 
         if norm(E(:, k + 1)) < opts.ConvTol
@@ -197,9 +206,11 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         close(vw);
         [fdir, fname] = fileparts(opts.Mp4File);
         fprintf('Animation saved to %s\n', fullfile(fdir, [fname '.avi']));
+
         if ~opts.LiveAnimation
             close(fig);
         end
+
     end
 
     E = E(:, 1:T_end + 1);
