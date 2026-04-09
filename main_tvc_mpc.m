@@ -1,5 +1,14 @@
 clear; clc; close all;
 live_animation = true; % set to false to skip live animation during simulation
+%% 
+% figure saving setup
+folder = pwd;
+FIG_DIR = fullfile(folder, 'report', 'figures');
+if ~exist(FIG_DIR, 'dir'); mkdir(FIG_DIR); end
+fprintf('Saving figures to:  %s\n', FIG_DIR);
+
+savepdf = @(fig, name) exportgraphics(fig, fullfile(FIG_DIR, name), ...
+    'ContentType','vector','BackgroundColor','white');
 
 %% Physical Parameters
 m = 50; % rocket mass [kg]
@@ -164,7 +173,7 @@ fprintf('\nLQR simulation done.\n');
 %% Horizon study
 
 % horizons to study
-N_study = [5, 10, 20, 30];
+N_study = [10, 20, 30, 40, 50];
 conv_times = nan(1, numel(N_study));
 peak_theta = nan(1, numel(N_study));
 solve_t = zeros(1, numel(N_study));
@@ -194,6 +203,8 @@ for ni = 1:numel(N_study)
     end
 
 end
+
+%%
 
 % Horizon study plots
 clrs_h = lines(numel(N_study));
@@ -231,7 +242,7 @@ for ni = 1:numel(N_study)
     lbl = sprintf('N=%d', N_study(ni));
 
     if infeas_step(ni) > 0
-        lbl = [lbl ' (infeasible @' sprintf('%.2fs', infeas_step(ni) * Ts) ')'];
+        % lbl = [lbl ' (infeasible @' sprintf('%.2fs', infeas_step(ni) * Ts) ')'];
         ls = '--';
     else
         ls = '-';
@@ -250,22 +261,24 @@ xlabel(ax_hey, 't [s]'); ylabel(ax_hey, 'e_y [m]'); title(ax_hey, 'Lateral error
 xlabel(ax_hth, 't [s]'); ylabel(ax_hth, '\theta [deg]'); title(ax_hth, 'Pitch angle vs horizon'); legend(ax_hth);
 xlabel(ax_hnm, 't [s]'); ylabel(ax_hnm, '||e||_2'); title(ax_hnm, 'Error norm vs horizon'); legend(ax_hnm);
 
+savepdf(gcf, 'horizon_study.pdf');
+
 %% Weight tuning study
 
 % Tuning scenarios
 W_cases = {
-           diag([50, 500, 10, 50, 200, 20]), diag([50, 0.01]), 'Nominal';
-           diag([50, 2000, 10, 50, 200, 20]), diag([50, 0.01]), 'High Q_{ez}=2000  (aggressive climb)';
-           diag([50, 500, 10, 50, 200, 20]), diag([5, 0.01]), 'Low R_\delta=5  (aggressive gimbal)';
-           diag([50, 500, 10, 50, 200, 20]), diag([500, 0.01]), 'High R_\delta=500  (conservative gimbal)';
-           diag([50, 500, 10, 50, 20, 20]), diag([50, 0.01]), 'Low Q_\theta=20  (relaxed pitch)';
+           diag([50, 500, 10, 50, 200, 20]), diag([50, 0.01]), '1';
+           diag([50, 2000, 10, 50, 200, 20]), diag([50, 0.01]), '2';
+           diag([50, 500, 10, 50, 200, 20]), diag([5, 0.01]),  '3';
+           diag([50, 500, 10, 50, 200, 20]), diag([500, 0.01]),'4';
+           diag([50, 500, 10, 50, 20, 20]),  diag([50, 0.01]), '5';
            };
 
 % plot settings
 clrs_w = num2cell(lines(size(W_cases, 1)), 2);
 
 fig_wt = figure('Name', 'Weight Tuning', 'NumberTitle', 'off', 'Color', 'w');
-tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
 ax_wy = nexttile;
 hold(ax_wy, 'on');
 grid(ax_wy, 'on');
@@ -280,6 +293,12 @@ title(ax_wth, 'Pitch angle  \theta');
 ylabel(ax_wth, '\theta [deg]');
 xlabel(ax_wth, 't [s]');
 
+ax_wz = nexttile; hold(ax_wz, 'on');
+grid(ax_wz, 'on');
+title(ax_wz, 'Altitude error  e_z');
+ylabel(ax_wz, 'e_z [m]');
+xlabel(ax_wz, 't [s]');
+
 ax_wd = nexttile; hold(ax_wd, 'on');
 grid(ax_wd, 'on');
 title(ax_wd, 'Gimbal angle  \delta');
@@ -288,12 +307,20 @@ xlabel(ax_wd, 't [s]');
 
 ax_wn = nexttile; hold(ax_wn, 'on');
 grid(ax_wn, 'on');
-title(ax_wn, 'Error norm  \|e\|_2');
-ylabel(ax_wn, '\|e\|_2  (log)');
+title(ax_wn, 'Error norm  ||e||_2');
+ylabel(ax_wn, '||e||_2  (log)');
 xlabel(ax_wn, 't [s]');
 
+% preallocate metrics table: settling time, peak pitch, gimbal sat steps
+nW = size(W_cases, 1);
+wt_settling   = zeros(nW, 1);
+wt_peak_pitch = zeros(nW, 1);
+wt_peak_ey    = zeros(nW, 1);
+wt_gimbal_sat = zeros(nW, 1);
+wt_thrust_sat = zeros(nW, 1);
+
 % runs MPC simulation for each case and plot results
-for wi = 1:size(W_cases, 1)
+for wi = 1:nW
     Qi = W_cases{wi, 1}; Ri = W_cases{wi, 2}; lbl = W_cases{wi, 3};
     [Pi, ~, Kdi] = dare(Ad, Bd, Qi, Ri);
     Ki = -Kdi;
@@ -309,8 +336,18 @@ for wi = 1:size(W_cases, 1)
 
     t_w = (0:T_end_w) * Ts;
 
-    plot(ax_wy, t_w, E_w(1, :), 'Color', clrs_w{wi}, 'LineWidth', 1.8, 'DisplayName', lbl);
+    % --- metrics ---
+    wt_settling(wi)   = T_end_w * Ts;
+    wt_peak_pitch(wi) = max(abs(rad2deg(E_w(5, :))));
+    wt_peak_ey(wi)    = max(abs(E_w(1, :)));
+    if ~isempty(U_w)
+        wt_gimbal_sat(wi)  = sum(abs(U_w(1,:)) >= u_ub(1) * 0.99);
+        wt_thrust_sat(wi)  = sum(abs(U_w(2,:)) >= u_ub(2) * 0.99);
+    end
+
+    plot(ax_wy,  t_w, E_w(1, :),          'Color', clrs_w{wi}, 'LineWidth', 1.8, 'DisplayName', lbl);
     plot(ax_wth, t_w, rad2deg(E_w(5, :)), 'Color', clrs_w{wi}, 'LineWidth', 1.8, 'DisplayName', lbl);
+    plot(ax_wz,  t_w, E_w(2, :),          'Color', clrs_w{wi}, 'LineWidth', 1.8, 'DisplayName', lbl);
 
     if ~isempty(U_w)
         stairs(ax_wd, (0:T_end_w - 1) * Ts, rad2deg(U_w(1, :)), 'Color', clrs_w{wi}, 'LineWidth', 1.8, 'DisplayName', lbl);
@@ -319,20 +356,34 @@ for wi = 1:size(W_cases, 1)
     semilogy(ax_wn, t_w, vecnorm(E_w), 'Color', clrs_w{wi}, 'LineWidth', 1.8, 'DisplayName', lbl);
 end
 
+fprintf('\nWeight tuning metrics:\n');
+fprintf('%-6s %-14s %-16s %-12s %-20s %-18s\n', 'Case', 'Settling [s]', 'Peak |th| [deg]', 'Peak ey [m]', 'Gimbal sat steps', 'Thrust sat steps');
+for wi = 1:nW
+    fprintf('%-6s %-14.2f %-16.2f %-12.2f %-20d %-18d\n', W_cases{wi,3}, wt_settling(wi), wt_peak_pitch(wi), wt_peak_ey(wi), wt_gimbal_sat(wi), wt_thrust_sat(wi));
+end
+%%
 % constraint lines
-yline(ax_wy, e_ub(1), 'k--', 'LineWidth', 0.8); yline(ax_wy, e_lb(1), 'k--', 'LineWidth', 0.8);
-yline(ax_wth, rad2deg(e_ub(5)), 'k--', 'LineWidth', 0.8); yline(ax_wth, rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8);
-yline(ax_wd, rad2deg(u_ub(1)), 'k--', 'LineWidth', 0.8); yline(ax_wd, rad2deg(u_lb(1)), 'k--', 'LineWidth', 0.8);
+yline(ax_wy,  e_ub(1),          'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(ax_wy,  e_lb(1),          'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(ax_wth, rad2deg(e_ub(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(ax_wth, rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(ax_wz,  e_ub(2),          'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(ax_wz,  e_lb(2),          'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(ax_wd,  rad2deg(u_ub(1)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(ax_wd,  rad2deg(u_lb(1)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+%
+lg1 = legend(ax_wy,  'Location', 'northeast', 'FontSize', 8); lg1.ItemTokenSize = [15 8];
+lg2 = legend(ax_wth, 'Location', 'northeast', 'FontSize', 8); lg2.ItemTokenSize = [15 8];
+lg3 = legend(ax_wz,  'Location', 'northeast', 'FontSize', 8); lg3.ItemTokenSize = [15 8];
+lg4 = legend(ax_wd,  'Location', 'northeast', 'FontSize', 8); lg4.ItemTokenSize = [15 8];
+lg5 = legend(ax_wn,  'Location', 'northeast', 'FontSize', 8); lg5.ItemTokenSize = [15 8];
 
-legend(ax_wy, 'Location', 'northeast', 'FontSize', 7);
-legend(ax_wth, 'Location', 'northeast', 'FontSize', 7);
-legend(ax_wd, 'Location', 'northeast', 'FontSize', 7);
-legend(ax_wn, 'Location', 'northeast', 'FontSize', 7);
+savepdf(fig_wt, 'weight_tuning_study.pdf');
 
 %% Disturbance rejection
 
 % define a lateral gust disturbance
-gust_k = round(1.0 / Ts); % step index
+gust_k = round(8.0 / Ts); % step index, applied after t=8s
 gust_force = 200; % force
 gust_dur = round(0.25 / Ts); % duration
 
@@ -349,22 +400,23 @@ figure('Name', 'Disturbance Rejection', 'NumberTitle', 'off', 'Color', 'w');
 tiledlayout(2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 nexttile; hold on; grid on;
-plot((0:T_end_mpc) * Ts, E_mpc(1, :), '-', 'Color', [0.2 0.45 0.85], 'LineWidth', 1.8, 'DisplayName', 'MPC (no disturbance)');
-plot((0:T_end_dist) * Ts, E_dist(1, :), '--', 'Color', [0.85 0.5 0.2], 'LineWidth', 1.8, 'DisplayName', 'MPC + wind gust');
+plot((0:T_end_dist) * Ts, E_dist(1, :), '-', 'Color', [0.85 0.5 0.2], 'LineWidth', 1.8, 'DisplayName', 'MPC + wind gust');
 xline(gust_k * Ts, 'k:', 'LineWidth', 1.5, 'DisplayName', 'Gust onset');
 yline(e_ub(1), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(e_lb(1), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 ylabel('e_y [m]'); xlabel('t [s]');
 title('Lateral error — disturbance rejection (200 N lateral gust for 0.25 s)');
 legend('Location', 'northeast');
 
 nexttile; hold on; grid on;
-plot((0:T_end_mpc) * Ts, rad2deg(E_mpc(5, :)), '-', 'Color', [0.2 0.45 0.85], 'LineWidth', 1.8);
-plot((0:T_end_dist) * Ts, rad2deg(E_dist(5, :)), '--', 'Color', [0.85 0.5 0.2], 'LineWidth', 1.8);
-xline(gust_k * Ts, 'k:', 'LineWidth', 1.5);
-yline(rad2deg(e_ub(5)), 'k--', 'LineWidth', 0.8);
-yline(rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8);
+plot((0:T_end_dist) * Ts, rad2deg(E_dist(5, :)), '-', 'Color', [0.85 0.5 0.2], 'LineWidth', 1.8, 'DisplayName', 'MPC + wind gust');
+xline(gust_k * Ts, 'k:', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+yline(rad2deg(e_ub(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 ylabel('\theta [deg]'); xlabel('t [s]');
 title('Pitch angle during gust');
+
+savepdf(gcf, 'disturbance_rejection.pdf');
 
 %% Observer: Measurement noise on output feedback
 %
@@ -388,13 +440,15 @@ ny = size(Cd, 1);
 Ob = obsv(Ad, Cd);
 fprintf('Observability rank: %d  (need %d)\n', rank(Ob), nx);
 
-% Disturbance model: constant output bias on attitude measurements only (nd = 2).
-% ey and ez are z=1 eigenvectors of Ad (position integrators), so a bias on those
-% output channels would be indistinguishable from the free-integrator modes,
-% making the augmented system unobservable. Bias on theta/q (IMU) avoids this.
-nd = 2;
+% Disturbance model: constant output bias on theta only (nd = 1).
+% ey/ez channels are unobservable with a bias (position integrators).
+% q is NOT biased: q is a gyroscope rate measurement with negligible drift,
+% and adding d_q causes the KF to split the true pitch-rate signal between
+% q_hat and d_q_hat, halving the effective q estimate and causing the MPC
+% to under-correct pitch — ultimately driving the system infeasible.
+nd = 1;
 Bd_dist = zeros(nx, nd); % disturbance does not enter dynamics
-Cd_dist = [0, 0; 0, 0; 1, 0; 0, 1]; % bias on theta and q channels only
+Cd_dist = [0; 0; 1; 0]; % bias on theta channel only
 
 % Augmented system:  xi = [x; d],  xi+ = A_aug*xi + B_aug*u,  y = C_aug*xi
 A_aug = [Ad, Bd_dist;
@@ -408,13 +462,16 @@ fprintf('Augmented observability rank: %d  (need %d)\n', rank(Ob_aug), nx + nd);
 
 % Process noise covariance for augmented state [x; d_theta; d_q]
 % d is nearly constant (slow-drifting IMU bias) so its process noise is very small.
-Qn_aug = blkdiag(diag([0.01; 0.01; 0.10; 0.10; (0.5 * pi / 180) ^ 2; (1 * pi / 180) ^ 2]), ...
+% vy/vz process noise kept small: velocity changes slowly (driven by thrust
+% direction), so the filter should trust the dynamics model rather than
+% inferring velocity from noisy position differences (sigma_y/Ts ≈ 10 m/s).
+Qn_aug = blkdiag(diag([0.01; 0.01; 0.01; 0.01; (0.5 * pi / 180) ^ 2; (1 * pi / 180) ^ 2]), ...
     (1e-6) * eye(nd));
 
 % Measurement noise covariance Rn (measurement uncertainty)
-sigma_y = 0.50;
-sigma_th = 1 * pi / 180;
-sigma_q = 2 * pi / 180;
+sigma_y = 0.10;
+sigma_th = 0.1 * pi / 180;
+sigma_q = 0.5 * pi / 180;
 Rn = diag([sigma_y ^ 2; sigma_y ^ 2; sigma_th ^ 2; sigma_q ^ 2]);
 
 % Steady-state Kalman gain on augmented system
@@ -427,21 +484,33 @@ eigs_obs = eig(A_aug - L_aug * C_aug);
 fprintf('Kalman gain max singular value:    %.4f\n', max(svd(L_aug)));
 fprintf('Augmented observer max|eig|:       %.6f  (must be < 1)\n', max(abs(eigs_obs)));
 
+% Tighten theta bounds for the observer run to account for the stopping
+% distance.  With Δq_max = 2 deg/s per step, halting from q = 12 deg/s
+% adds ~2.1 deg before theta peaks; at q = 20 it adds 5.5 deg.  A 3 deg
+% inset keeps the true theta below the ±15 deg linearisation limit even
+% as the controller decelerates from its maximum pitch rate.
+% Joint tightening: theta and q bounds must be consistent.
+% Stopping distance from q_max: 0.05×(12+10+8+6+4+2) = 2.1 deg, so
+% theta_ub + 2.1 = 14.1 deg < 15 deg physical limit.
+% At q_max = 20 the stopping distance is 5.5 deg, requiring theta_ub ≤ 9.5,
+% so q must also be tightened to keep the pair consistent.
+e_lb_obs = e_lb; e_lb_obs(1) = -3; e_lb_obs(5) = -20 * pi / 180; e_lb_obs(6) = -25 * pi / 180;
+e_ub_obs = e_ub;                   e_ub_obs(5) =  20 * pi / 180; e_ub_obs(6) =  25 * pi / 180;
+
 % run MPC simulation with observer and measurement noise
 rng(42);
 [E_obs, U_obs, ~, T_end_obs, infeas_obs, ~, E_hat] = run_mpc_sim( ...
     e0, x_ref_0, Ad, Bd, Q, R, P_inf, beta, N, ...
-    e_lb, e_ub, u_lb, u_ub, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
+    e_lb_obs, e_ub_obs, u_lb, u_ub, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
     'Lkf', L_aug, 'Cd', Cd, 'Aaug', A_aug, 'Baug', B_aug, 'Caug', C_aug, ...
-    'Rn', Rn, 'LiveAnimation', live_animation, 'Rp', rp);
+    'Rn', Rn, 'LiveAnimation', false, 'Rp', rp);
 fprintf('Observer-based MPC converged at t = %.2f s\n', T_end_obs * Ts);
 
 figure('Name', 'Observer MPC with Measurement Noise', 'NumberTitle', 'off', 'Color', 'w');
 tiledlayout(2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 nexttile; hold on; grid on;
-plot((0:T_end_mpc) * Ts, E_mpc(1, :), '-', 'Color', [0.20 0.45 0.85], 'LineWidth', 1.8, 'DisplayName', 'MPC (no noise)');
-plot((0:T_end_obs) * Ts, E_obs(1, :), '-', 'Color', [0.10 0.72 0.22], 'LineWidth', 1.8, 'DisplayName', 'True state (noisy)');
+plot((0:T_end_obs) * Ts, E_obs(1, :), '-',  'Color', [0.10 0.72 0.22], 'LineWidth', 1.8, 'DisplayName', 'True state');
 plot((0:T_end_obs) * Ts, E_hat(1, :), '--', 'Color', [0.92 0.45 0.10], 'LineWidth', 1.2, 'DisplayName', 'KF estimate');
 yline(e_ub(1), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 yline(e_lb(1), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
@@ -450,13 +519,15 @@ title('Lateral error — observer-based MPC with measurement noise');
 legend('Location', 'northeast');
 
 nexttile; hold on; grid on;
-plot((0:T_end_mpc) * Ts, rad2deg(E_mpc(5, :)), '-', 'Color', [0.20 0.45 0.85], 'LineWidth', 1.8, 'DisplayName', 'MPC (no noise)');
-plot((0:T_end_obs) * Ts, rad2deg(E_obs(5, :)), '-', 'Color', [0.10 0.72 0.22], 'LineWidth', 1.8, 'DisplayName', 'True state (noisy)');
+plot((0:T_end_obs) * Ts, rad2deg(E_obs(5, :)), '-',  'Color', [0.10 0.72 0.22], 'LineWidth', 1.8, 'DisplayName', 'True state');
 plot((0:T_end_obs) * Ts, rad2deg(E_hat(5, :)), '--', 'Color', [0.92 0.45 0.10], 'LineWidth', 1.2, 'DisplayName', 'KF estimate');
 yline(rad2deg(e_ub(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 yline(rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 ylabel('\theta [deg]'); xlabel('t [s]');
 title('Pitch angle — observer tracking');
+legend('Location', 'northeast');
+
+savepdf(gcf, 'observer_mpc_noise.pdf');
 
 %%  Final plots
 fprintf('\n--- Generating final summary plots ---\n');
