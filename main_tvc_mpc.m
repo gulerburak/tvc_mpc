@@ -16,7 +16,7 @@ g = 9.81; % gravitational acceleration    [m/s^2]
 T0 = m * g; % nominal thrust (= weight)     [N]   490.5 N
 J = 80; % moment of inertia about CG    [kg.m^2]
 l_tvc = 1.3; % CG to nozzle gimbal distance  [m]
-vz_nom = 0; % nominal speed: 0 = hover, 15 = climb [m/s]
+vz_nom = 0; % nominal speed: 0 = hover [m/s]
 Ts = 0.05; % sampling period  (20 Hz)      [s]
 N = 40; % MPC prediction horizon  (2 s)
 
