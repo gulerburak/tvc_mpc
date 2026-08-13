@@ -1,14 +1,8 @@
 clear; clc; close all;
 live_animation = true; % set to false to skip live animation during simulation
 %%
-% figure saving setup
-folder = pwd;
-FIG_DIR = fullfile(folder, 'report', 'figures');
-if ~exist(FIG_DIR, 'dir'); mkdir(FIG_DIR); end
-fprintf('Saving figures to:  %s\n', FIG_DIR);
-
-savepdf = @(fig, name) exportgraphics(fig, fullfile(FIG_DIR, name), ...
-    'ContentType', 'vector', 'BackgroundColor', 'white');
+% Figures are written by save_figure.m: vector PDF into report/figures/ and a
+% 150 dpi PNG into assets/ for the README.
 
 %% Physical Parameters
 m = 50; % rocket mass [kg]
@@ -69,7 +63,7 @@ fprintf('Discrete-time eigenvalue magnitudes: min=%.6f  max=%.6f\n', ...
 %% Controllability check
 Cm = ctrb(Ad, Bd);
 rk = rank(Cm);
-fprintf('Controllability matrix rank: %d  (need %d)', rk, nx);
+fprintf('Controllability matrix rank: %d  (need %d)\n', rk, nx);
 
 %% Cost matrices Q and R
 %         ey    ez    evy  evz  etheta  eq
@@ -96,16 +90,23 @@ assert(rho_cl < 1, 'LQR is not stabilising');
 
 %% Constraints
 %  State constraints (error coordinates):
-%    |ey| <= 100 m   (lateral position error)
-%    |ez| <= 100 m   (altitude deviation)
+%    ey in [-1, 4] m  (lateral position error — see note below)
+%    |ez| <= 100 m    (altitude deviation)
 %    |evy| <= 30 m/s  (lateral velocity)
 %    |evz| <= 30 m/s  (vertical velocity deviation)
 %    |theta| <= 15°   (linearisation validity)
-%    |q| <= 20°/s   (pitch rate)
+%    |q| <= 20°/s     (pitch rate)
 %
 %  Input constraints (hardware limits):
 %    |delta| <= 5°    (gimbal mechanical limit)
-%    |dT| <= 150 N (thrust deviation limit)
+%    |dT| <= 150 N    (thrust deviation limit)
+%
+%  Note on the lateral bound: the rocket starts 3 m off-axis and the corridor is
+%  deliberately tight and asymmetric — only 1 m of overshoot past the target is
+%  allowed. This is what separates the two controllers. MPC sees the wall coming
+%  over its horizon and shapes the approach to respect it, whereas LQR has no
+%  notion of the constraint and only stops when its command saturates against the
+%  5° gimbal limit.
 
 e_lb = [-1; -100; -30; -30; -15 * pi / 180; -20 * pi / 180];
 e_ub = [4; 100; 30; 30; 15 * pi / 180; 20 * pi / 180];
@@ -129,7 +130,7 @@ tic;
 [E_mpc, U_mpc, X_world, T_end_mpc, infeasible_mpc] = run_mpc_sim( ...
     e0, x_ref_0, Ad, Bd, Q, R, P_inf, beta, N, ...
     e_lb, e_ub, u_lb, u_ub, T_sim, vz_nom, m, g, J, l_tvc, T0, Ts, ...
-    'LiveAnimation', live_animation, 'Rp', rp, 'SaveMp4', true, 'Mp4File', 'tvc_animation.mp4');
+    'LiveAnimation', live_animation, 'Rp', rp, 'SaveVideo', true, 'VideoFile', 'tvc_animation.avi');
 t_mpc_sim = toc;
 
 fprintf('MPC simulation done in %.2f \n', t_mpc_sim);
@@ -260,7 +261,7 @@ xlabel(ax_hey, 't [s]'); ylabel(ax_hey, 'e_y [m]'); title(ax_hey, 'Lateral error
 xlabel(ax_hth, 't [s]'); ylabel(ax_hth, '\theta [deg]'); title(ax_hth, 'Pitch angle vs horizon'); legend(ax_hth);
 xlabel(ax_hnm, 't [s]'); ylabel(ax_hnm, '||e||_2'); title(ax_hnm, 'Error norm vs horizon'); legend(ax_hnm);
 
-savepdf(gcf, 'horizon_study.pdf');
+save_figure(gcf, 'horizon_study');
 
 %% Weight tuning study
 
@@ -316,6 +317,7 @@ wt_peak_pitch = zeros(nW, 1);
 wt_peak_ey = zeros(nW, 1);
 wt_gimbal_sat = zeros(nW, 1);
 wt_thrust_sat = zeros(nW, 1);
+wt_infeas = zeros(nW, 1); % step of first infeasibility, 0 if the case converged
 
 % runs MPC simulation for each case and plot results
 for wi = 1:nW
@@ -334,7 +336,10 @@ for wi = 1:nW
 
     t_w = (0:T_end_w) * Ts;
 
-    % metrics
+    % metrics. When a case goes infeasible the run stops early, so T_end_w*Ts is
+    % the time it FAILED at, not a settling time — record the distinction rather
+    % than reporting a failure as if it were the fastest case.
+    wt_infeas(wi) = inf_kw;
     wt_settling(wi) = T_end_w * Ts;
     wt_peak_pitch(wi) = max(abs(rad2deg(E_w(5, :))));
     wt_peak_ey(wi) = max(abs(E_w(1, :)));
@@ -356,10 +361,17 @@ for wi = 1:nW
 end
 
 fprintf('\nWeight tuning metrics:\n');
-fprintf('%-6s %-14s %-16s %-12s %-20s %-18s\n', 'Case', 'Settling [s]', 'Peak |th| [deg]', 'Peak ey [m]', 'Gimbal sat steps', 'Thrust sat steps');
+fprintf('%-6s %-16s %-16s %-12s %-20s %-18s\n', 'Case', 'Outcome [s]', 'Peak |th| [deg]', 'Peak ey [m]', 'Gimbal sat steps', 'Thrust sat steps');
 
 for wi = 1:nW
-    fprintf('%-6s %-14.2f %-16.2f %-12.2f %-20d %-18d\n', W_cases{wi, 3}, wt_settling(wi), wt_peak_pitch(wi), wt_peak_ey(wi), wt_gimbal_sat(wi), wt_thrust_sat(wi));
+
+    if wt_infeas(wi) > 0
+        outcome = sprintf('INFEAS @%.2f', wt_infeas(wi) * Ts);
+    else
+        outcome = sprintf('settled %.2f', wt_settling(wi));
+    end
+
+    fprintf('%-6s %-16s %-16.2f %-12.2f %-20d %-18d\n', W_cases{wi, 3}, outcome, wt_peak_pitch(wi), wt_peak_ey(wi), wt_gimbal_sat(wi), wt_thrust_sat(wi));
 end
 
 %%
@@ -379,7 +391,7 @@ lg3 = legend(ax_wz, 'Location', 'northeast', 'FontSize', 8); lg3.ItemTokenSize =
 lg4 = legend(ax_wd, 'Location', 'northeast', 'FontSize', 8); lg4.ItemTokenSize = [15 8];
 lg5 = legend(ax_wn, 'Location', 'northeast', 'FontSize', 8); lg5.ItemTokenSize = [15 8];
 
-savepdf(fig_wt, 'weight_tuning_study.pdf');
+save_figure(fig_wt, 'weight_tuning_study');
 
 %% Disturbance rejection
 
@@ -417,7 +429,7 @@ yline(rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 ylabel('\theta [deg]'); xlabel('t [s]');
 title('Pitch angle during gust');
 
-savepdf(gcf, 'disturbance_rejection.pdf');
+save_figure(gcf, 'disturbance_rejection');
 
 %% Observer: Measurement noise on output feedback
 %
@@ -486,11 +498,14 @@ fprintf('Observer-based MPC converged at t = %.2f s\n', T_end_obs * Ts);
 figure('Name', 'Observer MPC with Measurement Noise', 'NumberTitle', 'off', 'Color', 'w');
 tiledlayout(2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
+% Constraint lines must show the bounds this run actually enforced (the relaxed
+% observer set), not the nominal ones — otherwise the true state appears to
+% violate a limit that was never imposed.
 nexttile; hold on; grid on;
 plot((0:T_end_obs) * Ts, E_obs(1, :), '-', 'Color', [0.10 0.72 0.22], 'LineWidth', 1.8, 'DisplayName', 'True state');
 plot((0:T_end_obs) * Ts, E_hat(1, :), '--', 'Color', [0.92 0.45 0.10], 'LineWidth', 1.2, 'DisplayName', 'KF estimate');
-yline(e_ub(1), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
-yline(e_lb(1), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(e_ub_obs(1), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(e_lb_obs(1), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 ylabel('e_y [m]'); xlabel('t [s]');
 title('Lateral error — observer-based MPC with measurement noise');
 legend('Location', 'northeast');
@@ -498,13 +513,13 @@ legend('Location', 'northeast');
 nexttile; hold on; grid on;
 plot((0:T_end_obs) * Ts, rad2deg(E_obs(5, :)), '-', 'Color', [0.10 0.72 0.22], 'LineWidth', 1.8, 'DisplayName', 'True state');
 plot((0:T_end_obs) * Ts, rad2deg(E_hat(5, :)), '--', 'Color', [0.92 0.45 0.10], 'LineWidth', 1.2, 'DisplayName', 'KF estimate');
-yline(rad2deg(e_ub(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
-yline(rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(rad2deg(e_ub_obs(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
+yline(rad2deg(e_lb_obs(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 ylabel('\theta [deg]'); xlabel('t [s]');
 title('Pitch angle — observer tracking');
 legend('Location', 'northeast');
 
-savepdf(gcf, 'observer_mpc_noise.pdf');
+save_figure(gcf, 'observer_mpc_noise');
 
 %%  Final plots
 fprintf('\n--- Generating final summary plots ---\n');
