@@ -6,7 +6,7 @@
 required = {'E_mpc', 'U_mpc', 'E_lqr', 'U_lqr', 'X_world', 'Ts', 'e_lb', 'e_ub', ...
                 'u_lb', 'u_ub', 'N_study', 'conv_times', 'peak_theta', 'solve_t', ...
                 'Ad', 'Bd', 'Q', 'R', 'P_inf', 'K_lqr', 'm', 'g', 'J', 'l_tvc', 'T0', ...
-                'vz_nom', 'N', 'rp', ...
+                'vz_nom', 'N', 'rp', 'beta', 'z_target', 'e_lb_obs', 'e_ub_obs', ...
                 'E_obs', 'E_hat', 'Rn', 'T_end_mpc', 'T_end_obs'};
 
 for i = 1:numel(required)
@@ -16,10 +16,6 @@ for i = 1:numel(required)
     end
 
 end
-
-FIG_DIR = fullfile(fileparts(mfilename('fullpath')), 'report', 'figures');
-if ~exist(FIG_DIR, 'dir'); mkdir(FIG_DIR); end
-fprintf('Saving figures to:  %s\n', FIG_DIR);
 
 %% Shared style helpers
 clr_mpc = [0.20 0.45 0.85];
@@ -31,15 +27,6 @@ LW = 2.0; % main line width
 LWc = 1.0; % constraint line width
 FS = 14; % axis font size
 FStitle = 15;
-
-savepdf = @(fig, name) exportgraphics(fig, fullfile(FIG_DIR, name), ...
-    'ContentType', 'vector', 'BackgroundColor', 'white');
-
-%% Helper: consistent figure + layout
-function h = make_fig(w_cm, h_cm)
-    h = figure('Color', 'w', 'Units', 'centimeters');
-    h.Position = [2 2 w_cm h_cm];
-end
 
 %% FIGURE 1 — MPC vs LQR comparison
 T_mpc = (0:size(E_mpc, 2) - 1) * Ts;
@@ -101,7 +88,7 @@ title('Gimbal angle $\delta$', 'Interpreter', 'latex', 'FontSize', FStitle);
 legend('Location', 'northeast', 'FontSize', FS - 1);
 xlim([0 tmax]); set(ax, 'FontSize', FS);
 
-savepdf(fig1, 'fig_mpc_vs_lqr.pdf');
+save_figure(fig1, 'fig_mpc_vs_lqr');
 fprintf('  Saved fig_mpc_vs_lqr.pdf\n');
 
 %% FIGURE 2 — Animation snapshot at t = 1 s (k = 20)
@@ -113,7 +100,6 @@ ax_s = subplot(1, 2, 2);
 
 % Reconstruct predicted trajectory at k_snap using linearised model
 ek_snap = E_mpc(:, k_snap);
-U_snap = zeros(2, N); % approximate: use zeros (actual U_seq not stored)
 
 pred_w = zeros(2, N + 1);
 pred_w(:, 1) = X_world(1:2, k_snap);
@@ -122,7 +108,7 @@ e_tmp = ek_snap;
 for j = 1:N
     u_j = max(u_lb, min(u_ub, K_lqr * e_tmp)); % LQR prediction for horizon visualisation
     e_tmp = Ad * e_tmp + Bd * u_j;
-    z_ref_j = vz_nom * (k_snap - 1 + j) * Ts;
+    z_ref_j = z_target + vz_nom * (k_snap - 1 + j) * Ts;
     pred_w(1, j + 1) = e_tmp(1);
     pred_w(2, j + 1) = e_tmp(2) + z_ref_j;
 end
@@ -133,7 +119,7 @@ draw_tvc_frame(ax_r, ax_s, X_world(:, 1:k_snap), U_mpc(:, 1:k_snap - 1), ...
 sgtitle(fig2, sprintf('Animation snapshot  |  t = %.1f s', (k_snap - 1) * Ts), ...
     'FontSize', FStitle + 2, 'FontWeight', 'bold');
 
-savepdf(fig2, 'fig_animation.pdf');
+save_figure(fig2, 'fig_animation');
 fprintf('  Saved fig_animation.pdf\n');
 
 %% FIGURE 3 — Horizon study
@@ -161,7 +147,7 @@ ylabel('Computation time [s]');
 title('Solve time vs $N$', 'Interpreter', 'latex', 'FontSize', FStitle);
 grid on; set(gca, 'FontSize', FS);
 
-savepdf(fig3, 'fig_horizon.pdf');
+save_figure(fig3, 'fig_horizon');
 fprintf('  Saved fig_horizon.pdf\n');
 
 %% FIGURE 4 — Weight tuning  (re-run 3 quick simulations)
@@ -175,7 +161,7 @@ lstyles = {'--', '-', ':'};
 
 nx = 6; nu = 2;
 e0 = E_mpc(:, 1); % same initial condition as main simulation
-x_ref_0 = [0; 0; 0; vz_nom; 0; 0];
+x_ref_0 = [0; z_target; 0; vz_nom; 0; 0]; % same hover reference as main simulation
 T_sim_w = round(min(size(E_mpc, 2), 200)) - 1;
 
 fig4 = make_fig(16 * 2, 18 * 2);
@@ -211,13 +197,13 @@ for wi = 1:3
 
     for k = 1:T_sim_w
         ek = E_w(:, k);
-        [u_k, ~, ok] = solve_mpc_tvc(ek, Ad, Bd, Qi, Ri, Pi, N, ...
-            e_lb, e_ub, u_lb, u_ub, [], []);
+        [u_k, ~, ok] = solve_mpc_tvc(ek, Ad, Bd, Qi, Ri, Pi, beta, N, ...
+            e_lb, e_ub, u_lb, u_ub);
         if ~ok; u_k = max(u_lb, min(u_ub, Ki * ek)); end
         U_w(:, k) = u_k;
         x_next = tvc_nonlinear_step(X_w(:, k), u_k, m, g, J, l_tvc, T0, Ts);
         X_w(:, k + 1) = x_next;
-        x_ref_kp1 = [0; vz_nom * k * Ts; 0; vz_nom; 0; 0];
+        x_ref_kp1 = [0; z_target + vz_nom * k * Ts; 0; vz_nom; 0; 0];
         E_w(:, k + 1) = x_next - x_ref_kp1;
         if norm(E_w(:, k + 1)) < 1e-3; T_end_w = k; break; end
     end
@@ -250,13 +236,13 @@ ylabel(ax4(2), '$\theta$ [deg]');
 ylabel(ax4(3), '$\delta$ [deg]');
 ylabel(ax4(4), '$\|e\|_2$', 'Interpreter', 'latex');
 
-savepdf(fig4, 'fig_weights.pdf');
+save_figure(fig4, 'fig_weights');
 fprintf('  Saved fig_weights.pdf\n');
 
 %% FIGURE 5 — Disturbance rejection
 
 % Re-run disturbance simulation with same parameters as main script
-gust_k = round(1.0 / Ts);
+gust_k = round(8.0 / Ts); % gust applied after t = 8 s
 gust_F = 200;
 gust_dur = round(0.25 / Ts);
 T_sim_d = T_sim_w;
@@ -267,8 +253,8 @@ T_end_d = T_sim_d;
 
 for k = 1:T_sim_d
     ek = E_dist(:, k);
-    [u_k, ~, ok] = solve_mpc_tvc(ek, Ad, Bd, Q, R, P_inf, N, ...
-        e_lb, e_ub, u_lb, u_ub, [], []);
+    [u_k, ~, ok] = solve_mpc_tvc(ek, Ad, Bd, Q, R, P_inf, beta, N, ...
+        e_lb, e_ub, u_lb, u_ub);
     if ~ok; u_k = max(u_lb, min(u_ub, K_lqr * ek)); end
     x_next = tvc_nonlinear_step(X_dist(:, k), u_k, m, g, J, l_tvc, T0, Ts);
 
@@ -277,7 +263,7 @@ for k = 1:T_sim_d
     end
 
     X_dist(:, k + 1) = x_next;
-    x_ref_kp1 = [0; vz_nom * k * Ts; 0; vz_nom; 0; 0];
+    x_ref_kp1 = [0; z_target + vz_nom * k * Ts; 0; vz_nom; 0; 0];
     E_dist(:, k + 1) = x_next - x_ref_kp1;
     if norm(E_dist(:, k + 1)) < 5e-3; T_end_d = k; break; end
 end
@@ -316,13 +302,18 @@ title('Pitch angle $e_\theta$', 'Interpreter', 'latex', 'FontSize', FStitle);
 legend('Location', 'northeast', 'FontSize', FS - 1);
 xlim([0 max(T_dist(end), T_mpc(end))]); set(ax, 'FontSize', FS);
 
-savepdf(fig5, 'fig_disturbance.pdf');
+save_figure(fig5, 'fig_disturbance');
 fprintf('  Saved fig_disturbance.pdf\n');
 
 %% FIGURE 6 — Observer (Kalman filter) with measurement noise
 
-sigma_str = sprintf('GPS $\\pm%.2f$ m, IMU $\\pm%.0f^{\\circ}$', ...
-    sqrt(Rn(1, 1)), rad2deg(sqrt(Rn(5, 5))));
+% Rn is ny x ny over the measured outputs [ey; ez; etheta; eq], so the pitch
+% noise variance is Rn(3,3) — not Rn(5,5), which indexes the full state.
+% Plain text with literal +- and degree glyphs: the title below mixes this with
+% an em-dash, which MATLAB's LaTeX interpreter cannot parse (it silently falls
+% back to printing the markup verbatim).
+sigma_str = sprintf('GPS ±%.2f m, IMU ±%.2f°', ...
+    sqrt(Rn(1, 1)), rad2deg(sqrt(Rn(3, 3))));
 
 T_kf = (0:T_end_obs) * Ts;
 T_cl = (0:T_end_mpc) * Ts;
@@ -330,27 +321,30 @@ T_cl = (0:T_end_mpc) * Ts;
 fig6 = make_fig(16 * 2, 15 * 2);
 tiledlayout(fig6, 2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
+% Constraint markings use the relaxed bounds this run actually enforced
+% (e_*_obs), not the nominal set — otherwise the true state looks like it
+% violates a limit that was never imposed on it.
+
 % Panel 1: lateral error
 ax = nexttile; hold on; grid on;
 patch([0 max(T_kf(end), T_cl(end)) max(T_kf(end), T_cl(end)) 0], ...
-    [e_lb(1) e_lb(1) e_ub(1) e_ub(1)], clr_safe, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-plot(ax, [0 max(T_kf(end), T_cl(end))], [e_ub(1) e_ub(1)], 'k--', 'LineWidth', LWc, 'HandleVisibility', 'off');
-plot(ax, [0 max(T_kf(end), T_cl(end))], [e_lb(1) e_lb(1)], 'k--', 'LineWidth', LWc, 'HandleVisibility', 'off');
+    [e_lb_obs(1) e_lb_obs(1) e_ub_obs(1) e_ub_obs(1)], clr_safe, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+plot(ax, [0 max(T_kf(end), T_cl(end))], [e_ub_obs(1) e_ub_obs(1)], 'k--', 'LineWidth', LWc, 'HandleVisibility', 'off');
+plot(ax, [0 max(T_kf(end), T_cl(end))], [e_lb_obs(1) e_lb_obs(1)], 'k--', 'LineWidth', LWc, 'HandleVisibility', 'off');
 plot(ax, T_cl, E_mpc(1, :), '-', 'Color', clr_mpc, 'LineWidth', LW, 'DisplayName', 'MPC (no noise)');
 plot(ax, T_kf, E_obs(1, :), '-', 'Color', [0.10 0.68 0.22], 'LineWidth', LW, 'DisplayName', 'True state (noisy plant)');
 plot(ax, T_kf, E_hat(1, :), '--', 'Color', clr_horiz, 'LineWidth', LW - 0.4, 'DisplayName', 'KF estimate');
 yline(0, 'k:', 'LineWidth', 0.8, 'HandleVisibility', 'off');
 xlabel('$t$ [s]', 'Interpreter', 'latex');
 ylabel('$e_y$ [m]', 'Interpreter', 'latex');
-title(['Lateral error — observer-based MPC  (' sigma_str ')'], ...
-    'Interpreter', 'latex', 'FontSize', FStitle);
-legend('Location', 'northeast', 'FontSize', FS - 1, 'Interpreter', 'latex');
+title(['Lateral error — observer-based MPC  (' sigma_str ')'], 'FontSize', FStitle);
+legend('Location', 'northeast', 'FontSize', FS - 1);
 xlim([0 max(T_kf(end), T_cl(end))]); set(ax, 'FontSize', FS);
 
 % Panel 2: pitch angle
 ax = nexttile; hold on; grid on;
-plot(ax, [0 max(T_kf(end), T_cl(end))], rad2deg(e_ub(5)) * [1 1], 'k--', 'LineWidth', LWc, 'HandleVisibility', 'off');
-plot(ax, [0 max(T_kf(end), T_cl(end))], rad2deg(e_lb(5)) * [1 1], 'k--', 'LineWidth', LWc, 'HandleVisibility', 'off');
+plot(ax, [0 max(T_kf(end), T_cl(end))], rad2deg(e_ub_obs(5)) * [1 1], 'k--', 'LineWidth', LWc, 'HandleVisibility', 'off');
+plot(ax, [0 max(T_kf(end), T_cl(end))], rad2deg(e_lb_obs(5)) * [1 1], 'k--', 'LineWidth', LWc, 'HandleVisibility', 'off');
 plot(ax, T_cl, rad2deg(E_mpc(5, :)), '-', 'Color', clr_mpc, 'LineWidth', LW, 'DisplayName', 'MPC (no noise)');
 plot(ax, T_kf, rad2deg(E_obs(5, :)), '-', 'Color', [0.10 0.68 0.22], 'LineWidth', LW, 'DisplayName', 'True state (noisy plant)');
 plot(ax, T_kf, rad2deg(E_hat(5, :)), '--', 'Color', clr_horiz, 'LineWidth', LW - 0.4, 'DisplayName', 'KF estimate');
@@ -361,8 +355,16 @@ title('Pitch angle — KF tracking', 'FontSize', FStitle);
 legend('Location', 'northeast', 'FontSize', FS - 1, 'Interpreter', 'latex');
 xlim([0 max(T_kf(end), T_cl(end))]); set(ax, 'FontSize', FS);
 
-savepdf(fig6, 'fig_observer.pdf');
+save_figure(fig6, 'fig_observer');
 fprintf('  Saved fig_observer.pdf\n');
 
 % =========================================================================
-fprintf('\nAll figures saved to:  %s\n', FIG_DIR);
+fprintf('\nAll figures saved (PDF in report/figures, PNG in assets).\n');
+
+%% Helper: consistent figure size
+% Kept at the end of the file so the script also runs on releases before
+% R2024a, which require local functions to be defined last.
+function h = make_fig(w_cm, h_cm)
+    h = figure('Color', 'w', 'Units', 'centimeters');
+    h.Position = [2 2 w_cm h_cm];
+end

@@ -7,7 +7,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
     % e0, x_ref_0        initial error state and world reference state
     % Ad, Bd             discrete TVC model
     % Q, R, P_inf        stage and terminal cost matrices
-    % beta               beta
+    % beta               terminal cost scaling (>= 1) applied to P_inf
     % N                  prediction horizon
     % e_lb/ub, u_lb/ub   state and input constraints
     % T_sim              simulation steps
@@ -25,8 +25,9 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
     % Rn             measurement noise covariance
     % LiveAnimation  show animation during simulation
     % Rp             rocket visual parameters struct
-    % SaveMp4        save animation to MP4 file
-    % Mp4File        output filename
+    % SaveVideo      write the animation to a Motion JPEG AVI file
+    % VideoFile      output filename
+    % Verbose        print the applied input at every step
     %
     % Returns:
     % E            true error state trajectory
@@ -69,8 +70,9 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         opts.Rn = []
         opts.LiveAnimation (1, 1) logical = false
         opts.Rp = []
-        opts.SaveMp4 (1, 1) logical = false
-        opts.Mp4File = 'tvc_animation.mp4'
+        opts.SaveVideo (1, 1) logical = false
+        opts.VideoFile = 'tvc_animation.avi'
+        opts.Verbose (1, 1) logical = false
     end
 
     use_observer = ~isempty(opts.Lkf);
@@ -100,13 +102,13 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
 
     vw = [];
 
-    if opts.SaveMp4
+    if opts.SaveVideo
 
         if ~opts.LiveAnimation
             fig = figure('Color', 'w', 'Position', [40 60 1400 560], 'Name', 'TVC MPC', 'Visible', 'off');
         end
 
-        [fdir, fname] = fileparts(opts.Mp4File);
+        [fdir, fname] = fileparts(opts.VideoFile);
         avi_file = fullfile(fdir, [fname '.avi']);
         vw = VideoWriter(avi_file, 'Motion JPEG AVI');
         vw.FrameRate = round(1 / Ts);
@@ -134,8 +136,9 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
         U(:, k) = u_k;
         U_seqs(:, :, k) = U_seq;
 
-        % print current U
-        fprintf('k=%3d, t=%5.2f s, u=[%7.2f, %7.2f]\n', k, k * Ts, u_k(1), u_k(2));
+        if opts.Verbose
+            fprintf('k=%3d, t=%5.2f s, u=[%7.2f, %7.2f]\n', k, k * Ts, u_k(1), u_k(2));
+        end
 
         x_next = tvc_nonlinear_step(X(:, k), u_k, m, g, J, l_tvc, T0, Ts);
 
@@ -167,7 +170,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
 
         E_hat(:, k + 1) = e_hat;
 
-        if opts.LiveAnimation || opts.SaveMp4
+        if opts.LiveAnimation || opts.SaveVideo
             pred_world = zeros(2, N + 1);
             pred_world(:, 1) = X(1:2, k);
             e_tmp = E(:, k);
@@ -204,7 +207,7 @@ function [E, U, X, T_end, infeasible_k, U_seqs, E_hat] = run_mpc_sim( ...
 
     if ~isempty(vw)
         close(vw);
-        [fdir, fname] = fileparts(opts.Mp4File);
+        [fdir, fname] = fileparts(opts.VideoFile);
         fprintf('Animation saved to %s\n', fullfile(fdir, [fname '.avi']));
 
         if ~opts.LiveAnimation

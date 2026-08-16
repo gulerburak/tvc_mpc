@@ -1,13 +1,9 @@
-function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
+function plot_results_tvc(t_mpc, E_mpc, U_mpc, t_lqr, E_lqr, U_lqr, ...
         e_lb, e_ub, u_lb, u_ub, vz_nom, z_target)
     % PLOT_RESULTS_TVC  Static summary figures after TVC MPC simulation
-
-    FIG_DIR = fullfile(fileparts(mfilename('fullpath')), 'report', 'figures');
-    if ~exist(FIG_DIR, 'dir'); mkdir(FIG_DIR); end
-    fprintf('Saving figures to:  %s\n', FIG_DIR);
-
-    savepdf = @(fig, name) exportgraphics(fig, fullfile(FIG_DIR, name), ...
-        'ContentType', 'vector', 'BackgroundColor', 'white');
+    %
+    % E_mpc, E_lqr are error-state trajectories (6 x k); world-frame positions
+    % are reconstructed below by adding the reference back on.
 
     clr_safe = [0.85 1.00 0.85];
     clr_mpc = [0.20 0.45 0.85];
@@ -20,10 +16,10 @@ function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
     hold on; grid on; box on;
 
     % Reconstruct world-frame positions
-    y_mpc = X_mpc(1, :);
-    z_mpc = X_mpc(2, :) + z_target + vz_nom .* t_mpc;
-    y_lqr = X_lqr(1, :);
-    z_lqr = X_lqr(2, :) + z_target + vz_nom .* t_lqr;
+    y_mpc = E_mpc(1, :);
+    z_mpc = E_mpc(2, :) + z_target + vz_nom .* t_mpc;
+    y_lqr = E_lqr(1, :);
+    z_lqr = E_lqr(2, :) + z_target + vz_nom .* t_lqr;
 
     % Vertical reference line (y = 0)
     z_all = [z_mpc, z_lqr];
@@ -45,7 +41,7 @@ function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
     axis equal;
     set(gca, 'FontSize', 10);
 
-    savepdf(gcf, 'fig_2d_world_trajectories.pdf');
+    save_figure(gcf, 'fig_2d_world_trajectories');
 
     %% Figure 2 — Lateral position and pitch angle
     figure('Name', 'Lateral & Pitch', 'NumberTitle', 'off', 'Color', 'w');
@@ -66,14 +62,14 @@ function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
         yline(ub_sp(i), 'k-', 'LineWidth', 1.2, 'DisplayName', 'Constraint');
         yline(lb_sp(i), 'k-', 'LineWidth', 1.2, 'HandleVisibility', 'off');
         yline(0, 'k:', 'LineWidth', 0.8, 'HandleVisibility', 'off');
-        plot(t_mpc, scale_sp(i) * X_mpc(si, :), '-', 'Color', clr_mpc, 'LineWidth', 1.8, 'DisplayName', 'MPC');
-        plot(t_lqr, scale_sp(i) * X_lqr(si, :), '--', 'Color', clr_lqr, 'LineWidth', 1.5, 'DisplayName', 'LQR');
+        plot(t_mpc, scale_sp(i) * E_mpc(si, :), '-', 'Color', clr_mpc, 'LineWidth', 1.8, 'DisplayName', 'MPC');
+        plot(t_lqr, scale_sp(i) * E_lqr(si, :), '--', 'Color', clr_lqr, 'LineWidth', 1.5, 'DisplayName', 'LQR');
         xlabel('t  [s]'); ylabel(labels_sp{i});
         title(labels_sp{i}, 'FontSize', 10);
         legend('Location', 'northeast', 'FontSize', 7);
     end
 
-    savepdf(gcf, 'lateral_pos_and_pitch_angle.pdf');
+    save_figure(gcf, 'lateral_pos_and_pitch_angle');
 
     %% Figure 3 — Velocities
     figure('Name', 'Velocities', 'NumberTitle', 'off', 'Color', 'w');
@@ -91,13 +87,13 @@ function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
         yline(e_ub(si), 'k-', 'LineWidth', 1.2, 'DisplayName', 'Constraint');
         yline(e_lb(si), 'k-', 'LineWidth', 1.2, 'HandleVisibility', 'off');
         yline(0, 'k:', 'LineWidth', 0.8, 'HandleVisibility', 'off');
-        plot(t_mpc, X_mpc(si, :), '-', 'Color', clr_mpc, 'LineWidth', 1.8, 'DisplayName', 'MPC');
-        plot(t_lqr, X_lqr(si, :), '--', 'Color', clr_lqr, 'LineWidth', 1.5, 'DisplayName', 'LQR');
+        plot(t_mpc, E_mpc(si, :), '-', 'Color', clr_mpc, 'LineWidth', 1.8, 'DisplayName', 'MPC');
+        plot(t_lqr, E_lqr(si, :), '--', 'Color', clr_lqr, 'LineWidth', 1.5, 'DisplayName', 'LQR');
         xlabel('t [s]'); ylabel(vel_labels{i}); title(vel_labels{i}, 'FontSize', 10);
         legend('Location', 'northeast', 'FontSize', 7);
     end
 
-    savepdf(gca, 'velocities.pdf');
+    save_figure(gcf, 'velocities');
 
     %% Figure 4 — Control inputs
     figure('Name', 'Control Inputs', 'NumberTitle', 'off', 'Color', 'w');
@@ -138,25 +134,25 @@ function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
         legend('Location', 'northeast', 'FontSize', 7);
     end
 
-    savepdf(gcf, 'control_inputs.pdf');
+    save_figure(gcf, 'control_inputs');
 
     %% Figure 5 — Error-norm convergence
     figure('Name', 'Convergence', 'NumberTitle', 'off', 'Color', 'w');
     hold on; grid on;
-    semilogy(t_mpc, vecnorm(X_mpc), '-', 'Color', clr_mpc, 'LineWidth', 1.8, 'DisplayName', 'MPC');
-    semilogy(t_lqr, vecnorm(X_lqr), '--', 'Color', clr_lqr, 'LineWidth', 1.5, 'DisplayName', 'LQR');
+    semilogy(t_mpc, vecnorm(E_mpc), '-', 'Color', clr_mpc, 'LineWidth', 1.8, 'DisplayName', 'MPC');
+    semilogy(t_lqr, vecnorm(E_lqr), '--', 'Color', clr_lqr, 'LineWidth', 1.5, 'DisplayName', 'LQR');
     xlabel('t  [s]'); ylabel('log  ||e||_2');
     title('Error-norm convergence  (error-state coordinates)');
     legend; set(gca, 'FontSize', 10);
 
-    savepdf(gca, 'error_norm_convergence.pdf');
+    save_figure(gcf, 'error_norm_convergence');
 
     %% Figure 6 — Phase portrait: lateral position vs pitch angle
     figure('Name', 'Phase Portrait', 'NumberTitle', 'off', 'Color', 'w');
     hold on; grid on;
-    plot(rad2deg(X_mpc(5, :)), X_mpc(1, :), '-', 'Color', clr_mpc, 'LineWidth', 1.8, 'DisplayName', 'MPC');
-    plot(rad2deg(X_lqr(5, :)), X_lqr(1, :), '--', 'Color', clr_lqr, 'LineWidth', 1.5, 'DisplayName', 'LQR');
-    scatter(rad2deg(X_mpc(5, 1)), X_mpc(1, 1), 80, 'k', 'filled', 'DisplayName', 't=0');
+    plot(rad2deg(E_mpc(5, :)), E_mpc(1, :), '-', 'Color', clr_mpc, 'LineWidth', 1.8, 'DisplayName', 'MPC');
+    plot(rad2deg(E_lqr(5, :)), E_lqr(1, :), '--', 'Color', clr_lqr, 'LineWidth', 1.5, 'DisplayName', 'LQR');
+    scatter(rad2deg(E_mpc(5, 1)), E_mpc(1, 1), 80, 'k', 'filled', 'DisplayName', 't=0');
     scatter(0, 0, 100, [0.1 0.7 0.2], 'p', 'filled', 'DisplayName', 'Setpoint');
     xline(rad2deg(e_lb(5)), 'k--', 'LineWidth', 0.8, 'HandleVisibility', 'off');
     xline(rad2deg(e_ub(5)), 'k--', 'LineWidth', 0.8, 'DisplayName', 'Constraints');
@@ -164,5 +160,5 @@ function plot_results_tvc(t_mpc, X_mpc, U_mpc, t_lqr, X_lqr, U_lqr, ...
     title('Phase portrait: lateral error vs pitch angle');
     legend('Location', 'northwest'); set(gca, 'FontSize', 10);
 
-    savepdf(gca, 'phase_portrait.pdf');
+    save_figure(gcf, 'phase_portrait');
 end
